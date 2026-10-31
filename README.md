@@ -22,6 +22,10 @@ Hoy trae:
   juego conserva solo cómo escribe sus charts (chart.s, .bin, song.c) y sus reglas extra (GBBand separa más las gemas).
 - **Batería** (`bandcore.drums`): papeles, `drums.json` y el chart de batería. Agrupar los golpes y sugerir papeles
   depende de los canales de cada chip y sigue en cada juego.
+- **Arreglos entre consolas** (`bandcore.notes`, `bandcore.famistudio`): un formato común de notas (guitarra,
+  teclado, bajo y batería por papeles) que cada juego exporta con `<juego> export-notes`, y un escritor de proyectos
+  de FamiStudio que NESBand, GBBand y NGBand importan (GENBand usa `audio/arreglo_fm.py`). Probado en las 12
+  direcciones entre NES, Game Boy, Genesis y Neo Geo.
 - **Ediciones de charts** (`bandcore.chartedit`): `edits.json`, aplicar y comparar ediciones y los avisos de lo que
   no se puede tocar. Con la nota (`bandcore.chart.ChartNote`) y las reglas de la cruz del control (`check_playable`).
   Leer los charts ya exportados (chart.s del NES, .bin de la Game Boy) sigue en cada juego.
