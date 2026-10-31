@@ -1,0 +1,247 @@
+<style>
+  .filemenu { position: relative; display: inline-block; }
+  .filemenu .items { display: none; position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; min-width: 220px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+  .filemenu.open .items { display: grid; }
+  .filemenu .items button { border: 0; text-align: left; padding: 6px 10px; display: flex; justify-content: space-between; gap: 24px; background: transparent; }
+  .filemenu .items button:hover:not(:disabled) { background: var(--bg); }
+  .filemenu .items .keys { color: var(--muted); font-size: 12px; }
+  .filemenu .items hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0; width: min(560px, 94vw); }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog h2 { margin: 0; padding: 12px 16px; font-size: 15px; border-bottom: 1px solid var(--line); }
+  dialog .body { padding: 12px 16px; display: grid; gap: 10px; max-height: 70vh; overflow: auto; }
+  dialog .foot { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+  dialog .foot .status { margin-right: auto; color: var(--muted); }
+  dialog label.field { display: grid; gap: 3px; color: var(--muted); }
+  dialog label.field input, dialog label.field select { width: 100%; }
+  dialog .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  dialog .songs { display: grid; gap: 4px; }
+  dialog .songs button { text-align: left; display: grid; gap: 0; padding: 6px 10px; }
+  dialog .songs small { color: var(--muted); }
+  dialog .songs .current { border-color: var(--accent); }
+  dialog [hidden] { display: none !important; }
+  dialog .err { color: var(--err); white-space: pre-wrap; }
+  dialog .hint { color: var(--muted); font-size: 12px; }
+</style>
+
+<dialog id="dlgOpen">
+  <h2>Abrir canción</h2>
+  <div class="body"><div class="songs" id="songList">Cargando…</div></div>
+  <div class="foot"><button id="openNew">Nueva…</button><button id="openClose">Cancelar</button></div>
+</dialog>
+
+<dialog id="dlgNew">
+  <h2>Nueva canción</h2>
+  <form method="dialog" id="newForm">
+    <div class="body">
+      <label class="field"><span id="newSourceLabel"></span>
+        <select id="newSource"></select></label>
+      <label class="field" id="pathBox" hidden>Ruta del archivo
+        <input id="newPath"></label>
+      <label class="field" id="trackBox" hidden>Pista del .m3u <select id="newTrack"></select></label>
+      <label class="field" id="numberBox">Canción dentro del archivo (desde 1)
+        <input id="newNumber" type="number" min="1" value="1"></label>
+      <div class="row2">
+        <label class="field">Título en el menú <input id="newTitle" maxlength="60"></label>
+        <label class="field">Juego <input id="newGame" maxlength="60"></label>
+      </div>
+      <div class="row2">
+        <label class="field">Identificador (minúsculas, números y _) <input id="newName" required pattern="[a-z][a-z0-9_]*"></label>
+        <label class="field" id="durBox"><span id="durLabel"></span> <input id="newDuration" type="number" min="5"></label>
+      </div>
+      <label class="field">Cuadros por tiempo (solo si la estimación del tempo falla)
+        <input id="newBeat" type="number" min="3" max="60" placeholder="automático"></label>
+      <div class="hint" id="newHint"></div>
+      <div class="err" id="newError"></div>
+    </div>
+    <div class="foot"><span class="status" id="newStatus"></span>
+      <button type="button" id="newCancel">Cancelar</button><button type="submit" id="newGo">Importar</button></div>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  if (!(typeof DATA !== "undefined" && (DATA.editable || DATA.home))) return;
+  const q = (id) => document.getElementById(id);
+  const inSong = !!DATA.editable;
+  // PROFILE.import (null si el juego aún no importa desde el editor):
+  //   { label, placeholder, hint (HTML), status, tracks (NSF con .m3u y número de canción),
+  //     durationLabel, durationPlaceholder, durationPattern (regex: cuándo se pide la duración) }
+  const IMPORT = PROFILE.import || null;
+
+  async function api(url, body) {
+    const res = await fetch(url, body === undefined ? {} : { method: "POST", body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+  function reload() { window.__leaving = true; location.reload(); }
+  function discardOk() {
+    return !(window.editorDirty && window.editorDirty()) || confirm("Hay cambios sin guardar. ¿Descartarlos?");
+  }
+
+  // --- Abrir ---
+  async function showOpen() {
+    q("songList").textContent = "Cargando…";
+    q("dlgOpen").showModal();
+    try {
+      const { songs } = await api("/api/songs");
+      q("songList").textContent = songs.length ? ""
+        : IMPORT ? "No hay canciones en src/songs/: crea una con «Nueva…»."
+        : `No hay canciones en src/songs/: importa una con ${PROFILE.cli} import-song.`;
+      for (const s of songs) {
+        const b = document.createElement("button");
+        if (inSong && s.name === DATA.name) b.className = "current";
+        b.innerHTML = `<span></span><small></small>`;
+        b.children[0].textContent = s.title;
+        b.children[1].textContent = `${s.name}${s.game ? " · " + s.game : ""}${s.edited ? " · con ediciones" : ""}`;
+        b.onclick = async () => {
+          if (!discardOk()) return;
+          try { await api("/api/open", { name: s.name }); reload(); } catch (e) { alert(e.message); }
+        };
+        q("songList").append(b);
+      }
+    } catch (e) { q("songList").textContent = e.message; }
+  }
+
+  async function closeSong() {
+    if (!discardOk()) return;
+    try { await api("/api/close", {}); reload(); } catch (e) { alert(e.message); }
+  }
+
+  // --- Nueva ---
+  const slug = (text) => {
+    const s = text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return /^[a-z]/.test(s) ? s : s ? "c_" + s : "";
+  };
+  let nameTouched = false, tracks = [];
+  const sourcePath = () => (q("newSource").value === "__other" ? q("newPath").value : q("newSource").value);
+  const isNsf = () => !!IMPORT && IMPORT.tracks && /\.nsfe?$/i.test(sourcePath());
+  const asksDuration = () => !!IMPORT && new RegExp(IMPORT.durationPattern || ".", "i").test(sourcePath());
+
+  async function showNew() {
+    q("dlgOpen").close();
+    q("newError").textContent = "";
+    q("newStatus").textContent = "";
+    nameTouched = false;
+    const select = q("newSource");
+    select.innerHTML = "";
+    try {
+      const { sources } = await api("/api/sources");
+      for (const s of sources) select.append(new Option(s.path, s.path));
+    } catch (e) { q("newError").textContent = e.message; }
+    select.append(new Option("Otro archivo…", "__other"));
+    q("dlgNew").showModal();
+    await sourceChanged();
+  }
+
+  async function sourceChanged() {
+    q("pathBox").hidden = q("newSource").value !== "__other";
+    q("durBox").hidden = !asksDuration();
+    tracks = [];
+    q("trackBox").hidden = true;
+    q("numberBox").hidden = !IMPORT.tracks;
+    const path = sourcePath();
+    if (path && isNsf()) {
+      try {
+        const data = await api("/api/tracks?source=" + encodeURIComponent(path));
+        tracks = data.tracks;
+        if (tracks.length) {
+          const sel = q("newTrack");
+          sel.innerHTML = "";
+          for (const t of tracks) sel.append(new Option(`${t.number}. ${t.title}${t.seconds ? ` (${t.seconds} s)` : ""}`, t.number));
+          q("trackBox").hidden = false;
+          q("numberBox").hidden = true;
+          q("newGame").value = data.game || "";
+          trackChanged();
+          return;
+        }
+      } catch (e) { /* sin .m3u: se pide el número a mano */ }
+    }
+    if (!nameTouched && !q("newTitle").value) q("newName").value = slug(path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "").replace(/\(.*$/, ""));
+  }
+  function trackChanged() {
+    const t = tracks.find((x) => String(x.number) === q("newTrack").value);
+    if (!t) return;
+    q("newTitle").value = t.title;
+    q("newDuration").value = "";
+    q("newDuration").placeholder = t.seconds ? `${t.seconds} (del .m3u)` : "120";
+    if (!nameTouched) q("newName").value = slug(t.title);
+  }
+
+  async function submitNew(event) {
+    event.preventDefault();
+    const num = (id) => (q(id).value ? Number(q(id).value) : null);
+    const body = {
+      source: sourcePath(), name: q("newName").value.trim(), title: q("newTitle").value.trim(), game: q("newGame").value.trim(),
+      duration: asksDuration() ? num("newDuration") : null, beat_frames: num("newBeat"),
+    };
+    if (IMPORT.tracks) body.number = tracks.length ? Number(q("newTrack").value) : num("newNumber");
+    q("newError").textContent = "";
+    q("newGo").disabled = true;
+    q("newStatus").textContent = IMPORT.status || "Importando…";
+    try { await api("/api/import", body); reload(); }
+    catch (e) { q("newError").textContent = e.message; q("newStatus").textContent = ""; }
+    q("newGo").disabled = false;
+  }
+
+  if (IMPORT) {
+    q("newSourceLabel").textContent = IMPORT.label;
+    q("newPath").placeholder = IMPORT.placeholder || "";
+    q("durLabel").textContent = IMPORT.durationLabel || "Segundos a grabar";
+    q("newDuration").placeholder = IMPORT.durationPlaceholder || "120";
+    q("newHint").innerHTML = IMPORT.hint || "";
+    q("newSource").onchange = sourceChanged;
+    q("newPath").onchange = sourceChanged;
+    q("newTrack").onchange = trackChanged;
+    q("newName").oninput = () => { nameTouched = true; };
+    q("newTitle").oninput = () => { if (!nameTouched) q("newName").value = slug(q("newTitle").value); };
+    q("newForm").onsubmit = submitNew;
+    q("newCancel").onclick = () => q("dlgNew").close();
+    q("openNew").onclick = showNew;
+  } else {
+    q("openNew").hidden = true;
+  }
+  q("openClose").onclick = () => q("dlgOpen").close();
+
+  // --- Menú ---
+  const items = [
+    IMPORT ? ["Nueva canción…", "", showNew, false] : undefined,
+    ["Abrir…", "Ctrl+O", showOpen, false],
+    null,
+    ["Guardar", "Ctrl+S", () => window.editorActions && window.editorActions.save(false), !inSong],
+    [PROFILE.exportLabel, "", () => window.editorActions && window.editorActions.save(true), !inSong],
+    null,
+    ["Cerrar canción", "", closeSong, !inSong],
+  ].filter((item) => item !== undefined);
+  window.fileMenu = { open: showOpen, create: IMPORT ? showNew : null };
+  window.addEventListener("DOMContentLoaded", () => {
+    const slot = q("menuslot");
+    if (!slot) return;
+    const menu = document.createElement("div");
+    menu.className = "filemenu";
+    const button = document.createElement("button");
+    button.textContent = "Archivo ▾";
+    const list = document.createElement("div");
+    list.className = "items";
+    for (const item of items) {
+      if (!item) { list.append(document.createElement("hr")); continue; }
+      const b = document.createElement("button");
+      b.innerHTML = "<span></span><span class='keys'></span>";
+      b.children[0].textContent = item[0];
+      b.children[1].textContent = item[1];
+      b.disabled = item[3];
+      b.onclick = () => { menu.classList.remove("open"); item[2](); };
+      list.append(b);
+    }
+    menu.append(button, list);
+    slot.append(menu);
+    button.onclick = (e) => { e.stopPropagation(); menu.classList.toggle("open"); };
+    document.addEventListener("click", () => menu.classList.remove("open"));
+  });
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); showOpen(); }
+  });
+  if (DATA.home) window.addEventListener("DOMContentLoaded", showOpen);
+})();
+</script>

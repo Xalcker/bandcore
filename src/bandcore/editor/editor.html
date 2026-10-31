@@ -1,0 +1,1342 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__GAME__ - editor de charts</title>
+<style>
+  :root {
+    --bg: #14161c; --panel: #1d2029; --line: #2e3340; --text: #dfe3ee; --muted: #8b93a7;
+    --accent: #6aa8ff; --err: #ff5d5d; --warn: #ffb347;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, Segoe UI, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header .sub { color: var(--muted); }
+  label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  select, button, input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  main { padding: 12px 16px; display: grid; gap: 12px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .box h2 { font-size: 13px; margin: 0; padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-weight: 600; display: flex; gap: 12px; align-items: center; }
+  .box h2 .grow { flex: 1; }
+  canvas { display: block; width: 100%; }
+  #lower { display: grid; grid-template-columns: minmax(340px, 480px) 1fr; gap: 12px; align-items: start; }
+  #side { padding: 10px; display: grid; gap: 10px; }
+  #side h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
+  #problems { max-height: 220px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+  #problems li { padding: 2px 6px; border-radius: 3px; cursor: pointer; }
+  #problems li:hover { background: var(--bg); }
+  #problems .error { color: var(--err); }
+  #problems .warn { color: var(--warn); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  .stats { color: var(--muted); }
+  .stats b { color: var(--text); font-weight: 600; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; }
+  #msg { color: var(--muted); min-height: 1.4em; }
+  #drumBody { padding: 8px 10px; overflow-x: auto; }
+  .drumtable { border-collapse: collapse; width: 100%; }
+  .drumtable th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 10px; }
+  .drumtable td { padding: 3px 10px; border-top: 1px solid var(--line); }
+  kbd { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font-size: 12px; }
+  .help { color: var(--muted); font-size: 12px; }
+  .help p { margin: 2px 0; }
+</style>
+</head>
+<body>
+<header>
+  <span id="menuslot"></span>
+  <h1 id="title"></h1>
+  <span class="sub" id="subtitle"></span>
+  <label>Instrumento <select id="inst"></select></label>
+  <label>Dificultad <select id="diff"></select></label>
+  <span id="playslot"></span>
+  <span id="actions"></span>
+</header>
+<main>
+  <div class="box">
+    <h2><span>Canales de la canción</span><span class="grow"></span>
+      <button id="zoomOut" title="Alejar">&minus;</button><button id="zoomIn" title="Acercar">+</button>
+      <button id="zoomAll" title="Ver toda la canción">Todo</button>
+      <span id="tlInfo"></span></h2>
+    <canvas id="timeline"></canvas>
+  </div>
+  <div id="lower">
+    <div class="box">
+      <h2><span>Chart</span><span class="grow"></span><span id="hwInfo"></span></h2>
+      <canvas id="highway"></canvas>
+    </div>
+    <div class="box" id="side">
+      <div><h3>Chart</h3><div class="stats" id="stats"></div></div>
+      <div id="editTools"></div>
+      <div id="msg"></div>
+      <div><h3>Avisos</h3><ul id="problems"></ul></div>
+      <div class="legend" id="legend"></div>
+      <div class="help" id="help"></div>
+    </div>
+  </div>
+  <div class="box" id="drumBox" hidden>
+    <h2><span>Batería: qué es cada golpe de los canales de batería</span><span class="grow"></span><span id="drumNote" style="color:var(--warn)"></span></h2>
+    <div id="drumBody"></div>
+  </div>
+</main>
+<script>
+"use strict";
+const PROFILE = __PROFILE__;
+const DATA = __DATA__;
+// PROFILE (lo pone cada juego, ver bandcore/editor/page.py): nombre, botones del control, canales del chip,
+// textos de exportar y de Escuchar, y cómo se agrupan los canales en el audio del reproductor
+
+const LANE_COLORS = [
+  { name: "Verde", color: "#3fcf4f" },
+  { name: "Rojo", color: "#ff4d4d" },
+  { name: "Amarillo", color: "#ffd633" },
+  { name: "Azul", color: "#4d94ff" },
+  { name: "Naranja", color: "#ff9933" },
+];
+const LANES = LANE_COLORS.map((lane, i) => ({ ...lane, pad: PROFILE.pads[i] }));
+// Cada canal: { id, label, color, discrete, pitchLabel? } (pitchLabel: "tipo" o "sample" en lugar del nombre de la nota)
+const CHANNELS = PROFILE.channels;
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const noteName = (p) => NOTE_NAMES[p % 12] + (Math.floor(p / 12) - 1);
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const LEAD_IN = DATA.leadIn;
+
+const state = {
+  inst: DATA.instruments[0].name,
+  diff: DATA.difficulties[Math.min(3, DATA.difficulties.length - 1)].name,
+  cur: LEAD_IN,                 // cuadro en la línea de golpe del chart
+  tlStart: 0,                   // primer cuadro visible en la línea de tiempo
+  tlScale: 0.4,                 // pixeles por cuadro en la línea de tiempo
+  hwScale: 2.5,                 // pixeles por cuadro en el chart
+  charts: DATA.charts,          // clave "instrumento/dificultad" -> [{frame, mask, end, star}]
+  problems: DATA.problems,
+};
+// Silenciar (M) o dejar solo (S) un canal al escuchar; los botones están en la línea de tiempo
+state.mute = {};
+state.solo = {};
+const isAudible = (id) => (Object.values(state.solo).some(Boolean) ? !!state.solo[id] : !state.mute[id]);
+const chartKey = () => `${state.inst}/${state.diff}`;
+const notes = () => state.charts[chartKey()] || [];
+const lanesOf = (mask) => [0, 1, 2, 3, 4].filter((b) => mask >> b & 1);
+const SONG_END = DATA.endFrame;
+
+// --- Lienzos -----------------------------------------------------------------
+
+function fit(canvas, height) {
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth;
+  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    canvas.style.height = height + "px";
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: width, h: height };
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// --- Línea de tiempo: las notas de cada canal ----------------------------------
+
+const TL = { labelW: 86, overviewH: 30, rowH: 52, top: 30 + 6 };
+
+function channelLayout(id) {
+  // Alturas de un canal: una fila por tono o sample distinto (canales de batería) o escala continua (el resto)
+  const notes = DATA.channels[id] || [];
+  const pitches = [...new Set(notes.map((n) => n[1]))].sort((a, b) => a - b);
+  return { pitches, min: pitches[0], max: pitches[pitches.length - 1] };
+}
+const layouts = Object.fromEntries(CHANNELS.map((c) => [c.id, channelLayout(c.id)]));
+
+function pitchY(ch, pitch, rowTop) {
+  const lay = layouts[ch.id];
+  const pad = 8, span = TL.rowH - 2 * pad - 4;
+  if (lay.pitches.length <= 1) return rowTop + TL.rowH / 2 - 2;
+  if (ch.discrete) return rowTop + pad + span * (1 - lay.pitches.indexOf(pitch) / (lay.pitches.length - 1));
+  return rowTop + pad + span * (1 - (pitch - lay.min) / (lay.max - lay.min));
+}
+
+const tlX = (frame) => TL.labelW + (frame - state.tlStart) * state.tlScale;
+const tlFrame = (x) => (x - TL.labelW) / state.tlScale + state.tlStart;
+
+function clampTimeline() {
+  const canvas = $("timeline");
+  const visible = (canvas.clientWidth - TL.labelW) / state.tlScale;
+  const total = SONG_END + 60;
+  state.tlStart = Math.max(-30, Math.min(state.tlStart, total - Math.min(visible, total)));
+}
+
+// Botones M (silenciar) y S (solo) de cada canal, debajo de su nombre
+const CH_BTN = { y: 31, size: 17, mx: 8, sx: 29 };
+function drawChannelButtons(ctx, ch, top) {
+  for (const [label, x, on, color] of [["M", CH_BTN.mx, state.mute[ch.id], css("--err")], ["S", CH_BTN.sx, state.solo[ch.id], css("--warn")]]) {
+    ctx.fillStyle = on ? color : "transparent";
+    ctx.strokeStyle = on ? color : css("--line");
+    ctx.fillRect(x, top + CH_BTN.y, CH_BTN.size, CH_BTN.size);
+    ctx.strokeRect(x + .5, top + CH_BTN.y + .5, CH_BTN.size - 1, CH_BTN.size - 1);
+    ctx.fillStyle = on ? "#000" : css("--muted");
+    ctx.font = "bold 10px system-ui";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x + CH_BTN.size / 2, top + CH_BTN.y + CH_BTN.size / 2 + 1);
+    ctx.textAlign = "left";
+  }
+  ctx.font = "12px system-ui";
+}
+function channelButtonAt(x, y) {
+  if (!DATA.player || y < TL.top) return null;
+  const row = Math.floor((y - TL.top) / TL.rowH);
+  const dy = y - TL.top - row * TL.rowH - CH_BTN.y;
+  if (row >= CHANNELS.length || dy < 0 || dy > CH_BTN.size) return null;
+  if (x >= CH_BTN.mx && x <= CH_BTN.mx + CH_BTN.size) return { id: CHANNELS[row].id, kind: "mute" };
+  if (x >= CH_BTN.sx && x <= CH_BTN.sx + CH_BTN.size) return { id: CHANNELS[row].id, kind: "solo" };
+  return null;
+}
+function toggleChannel(id, kind) {
+  const map = kind === "mute" ? state.mute : state.solo;
+  map[id] = !map[id];
+  if (window.onChannelsChanged) window.onChannelsChanged();
+  redraw();
+}
+
+function drawTimeline() {
+  const height = TL.top + CHANNELS.length * TL.rowH + 4;
+  const { ctx, w, h } = fit($("timeline"), height);
+  ctx.clearRect(0, 0, w, h);
+  const total = SONG_END + 60;
+  const plotW = w - TL.labelW;
+
+  // Vista general: todas las notas de la canción en pequeño y la ventana actual
+  const ox = (f) => TL.labelW + (f / total) * plotW;
+  ctx.fillStyle = css("--bg");
+  ctx.fillRect(TL.labelW, 0, plotW, TL.overviewH);
+  CHANNELS.forEach((ch, i) => {
+    ctx.fillStyle = ch.color;
+    for (const n of DATA.channels[ch.id] || []) ctx.fillRect(ox(n[0]), 3 + i * 5, Math.max(1, (n[2] / total) * plotW), 3);
+  });
+  const vx0 = ox(Math.max(0, state.tlStart)), vx1 = ox(Math.min(total, tlFrame(w)));
+  ctx.fillStyle = "rgba(106,168,255,.18)";
+  ctx.fillRect(vx0, 0, vx1 - vx0, TL.overviewH);
+  ctx.strokeStyle = css("--accent");
+  ctx.strokeRect(vx0 + .5, .5, Math.max(2, vx1 - vx0), TL.overviewH - 1);
+  ctx.fillStyle = css("--text");
+  ctx.fillRect(ox(state.cur), 0, 1, TL.overviewH);
+  ctx.fillStyle = css("--muted");
+  ctx.font = "11px system-ui";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Vista general", 8, TL.overviewH / 2);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(TL.labelW, TL.overviewH, plotW, h - TL.overviewH);
+  ctx.clip();
+
+  // Filas de los canales
+  CHANNELS.forEach((ch, i) => {
+    const top = TL.top + i * TL.rowH;
+    ctx.fillStyle = i % 2 ? "rgba(255,255,255,.015)" : "rgba(255,255,255,.04)";
+    ctx.fillRect(TL.labelW, top, plotW, TL.rowH);
+  });
+  // Antes de la música (entrada de la autopista) y después del fin
+  ctx.fillStyle = "rgba(0,0,0,.35)";
+  ctx.fillRect(TL.labelW, TL.top, Math.max(0, tlX(LEAD_IN) - TL.labelW), CHANNELS.length * TL.rowH);
+  ctx.fillRect(tlX(SONG_END), TL.top, w, CHANNELS.length * TL.rowH);
+
+  // Rejilla de tiempos: una línea por tiempo (más marcada cada 4), solo si caben
+  const fpb = DATA.framesPerBeat;
+  if (fpb * state.tlScale >= 3) {
+    const first = Math.ceil((tlFrame(TL.labelW) - DATA.firstBeat) / fpb);
+    const last = Math.floor((tlFrame(w) - DATA.firstBeat) / fpb);
+    for (let k = first; k <= last; k++) {
+      const x = Math.round(tlX(DATA.firstBeat + k * fpb)) + .5;
+      const bar = ((k % 4) + 4) % 4 === 0;
+      ctx.strokeStyle = bar ? "rgba(255,255,255,.28)" : "rgba(255,255,255,.1)";
+      ctx.beginPath();
+      ctx.moveTo(x, TL.top);
+      ctx.lineTo(x, TL.top + CHANNELS.length * TL.rowH);
+      ctx.stroke();
+    }
+  }
+
+  // Notas (apagadas si el canal no se oye)
+  CHANNELS.forEach((ch, i) => {
+    const top = TL.top + i * TL.rowH;
+    ctx.fillStyle = ch.color;
+    ctx.globalAlpha = isAudible(ch.id) ? 1 : 0.25;
+    for (const n of DATA.channels[ch.id] || []) {
+      const x = tlX(n[0]);
+      const wd = Math.max(2, n[2] * state.tlScale - 1);
+      if (x + wd < TL.labelW || x > w) continue;
+      ctx.fillRect(x, pitchY(ch, n[1], top) - 2, wd, 5);
+    }
+    ctx.globalAlpha = 1;
+  });
+
+  // Las notas del chart elegido, como marcas arriba de todo
+  ctx.fillStyle = css("--text");
+  for (const n of notes()) {
+    const x = tlX(n.frame);
+    if (x < TL.labelW || x > w) continue;
+    ctx.fillRect(x - 1, TL.overviewH + 1, 2, 4);
+  }
+
+  // Línea de golpe actual
+  const cx = tlX(state.cur);
+  ctx.strokeStyle = css("--accent");
+  ctx.beginPath();
+  ctx.moveTo(Math.round(cx) + .5, TL.overviewH);
+  ctx.lineTo(Math.round(cx) + .5, h);
+  ctx.stroke();
+  ctx.restore();
+
+  // Etiquetas de los canales (y, en los de batería, qué tono o sample hay en cada altura)
+  ctx.font = "12px system-ui";
+  CHANNELS.forEach((ch, i) => {
+    const top = TL.top + i * TL.rowH;
+    ctx.fillStyle = isAudible(ch.id) ? ch.color : css("--muted");
+    ctx.textBaseline = "top";
+    ctx.fillText(ch.label, 8, top + 5);
+    if (DATA.player) drawChannelButtons(ctx, ch, top);
+    ctx.fillStyle = css("--muted");
+    ctx.font = "10px system-ui";
+    const lay = layouts[ch.id];
+    ctx.fillText(lay.pitches.length ? `${(DATA.channels[ch.id] || []).length} notas` : "vacío", 8, top + 21);
+    if (ch.discrete && lay.pitches.length > 1 && lay.pitches.length <= 6) {
+      for (const p of lay.pitches) ctx.fillText(ch.pitchLabel ? `${ch.pitchLabel} ${p}` : noteName(p), 56, pitchY(ch, p, top) - 5);
+    }
+    ctx.font = "12px system-ui";
+  });
+
+  // Marcas de tiempo (segundos)
+  ctx.fillStyle = css("--muted");
+  ctx.font = "10px system-ui";
+  ctx.textBaseline = "top";
+  const secPx = 60 * state.tlScale;
+  const stepSec = [1, 2, 5, 10, 15, 30, 60].find((s) => s * secPx >= 56) || 60;
+  for (let s = Math.ceil(tlFrame(TL.labelW) / 60 / stepSec) * stepSec; s * 60 <= tlFrame(w); s += stepSec) {
+    const x = tlX(s * 60);
+    if (x < TL.labelW) continue;
+    ctx.fillText(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`, x + 2, TL.overviewH + 6);
+  }
+  $("tlInfo").textContent = `${Math.round(60 * state.tlScale)} px/s`;
+}
+
+// --- Chart: los 5 carriles como se ven en el juego -----------------------------
+
+const HW = { padX: 24, hitY: 0, top: 18 };
+const HW_HEIGHT = 560;
+
+const hwY = (frame, h) => h - 60 - (frame - state.cur) * state.hwScale;
+const hwFrame = (y, h) => state.cur + (h - 60 - y) / state.hwScale;
+// En pantalla la batería va como en Rock Band: rojo, amarillo, azul, verde y, al final, el naranja del bombo.
+// El carril (el botón del control) es el mismo de siempre; solo cambia en qué columna se dibuja.
+const DRUM_ORDER = [1, 2, 3, 0, 4];
+const slotOf = (lane) => (state.inst === "bateria" ? DRUM_ORDER.indexOf(lane) : lane);
+const laneOfSlot = (slot) => (state.inst === "bateria" ? DRUM_ORDER[slot] : slot);
+const laneX = (lane, w) => HW.padX + ((slotOf(lane) + .5) * (w - 2 * HW.padX)) / 5;
+
+function problemFrames() {
+  const map = new Map();
+  for (const p of state.problems[chartKey()] || []) {
+    if (map.get(p.frame) !== "error") map.set(p.frame, p.kind);
+  }
+  return map;
+}
+
+// La batería (instrumento "bateria") usa los mismos 5 carriles: tarola, toms y, en el naranja, la barra del bombo
+const isDrums = () => state.inst === "bateria";
+const DRUM_LANE_NAMES = ["T3 Crash", "Tarola", "T1 Hi-hat", "T2 Ride", "Bombo"];   // como en Rock Band: los platillos son el mismo carril que el tom
+const laneName = (lane) => (isDrums() ? DRUM_LANE_NAMES[lane] : LANES[lane].name);
+
+function drawGem(ctx, x, y, lane, star, bad, cymbal) {
+  const c = LANES[lane].color;
+  ctx.fillStyle = c;
+  if (cymbal) {   // los platillos son un rombo en el carril del tom
+    ctx.beginPath();
+    ctx.moveTo(x - 19, y); ctx.lineTo(x, y - 11); ctx.lineTo(x + 19, y); ctx.lineTo(x, y + 11);
+    ctx.closePath();
+  } else roundRect(ctx, x - 17, y - 8, 34, 16, 6);
+  ctx.fill();
+  ctx.strokeStyle = bad ? (bad === "error" ? css("--err") : css("--warn")) : "rgba(0,0,0,.55)";
+  ctx.lineWidth = bad ? 2.5 : 1.5;
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  if (star) {
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const r = k % 2 ? 3 : 7, a = -Math.PI / 2 + (k * Math.PI) / 5;
+      ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function drawKick(ctx, fieldL, fieldW, y, star, bad) {
+  ctx.fillStyle = LANES[4].color;
+  ctx.globalAlpha = .85;
+  ctx.fillRect(fieldL, y - 5, fieldW, 10);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = bad ? (bad === "error" ? css("--err") : css("--warn")) : "rgba(0,0,0,.55)";
+  ctx.lineWidth = bad ? 2.5 : 1.5;
+  ctx.strokeRect(fieldL, y - 5, fieldW, 10);
+  ctx.lineWidth = 1;
+  if (star) { ctx.fillStyle = "#fff"; ctx.fillRect(fieldL + fieldW / 2 - 12, y - 2, 24, 4); }
+}
+
+function drawHighway() {
+  const { ctx, w, h } = fit($("highway"), HW_HEIGHT);
+  ctx.clearRect(0, 0, w, h);
+  const fieldL = HW.padX, fieldW = w - 2 * HW.padX;
+  const laneW = fieldW / 5;
+  // Carriles
+  for (let slot = 0; slot < 5; slot++) {
+    ctx.fillStyle = slot % 2 ? "rgba(255,255,255,.03)" : "rgba(255,255,255,.06)";
+    ctx.fillRect(fieldL + slot * laneW, 0, laneW, h);
+    ctx.fillStyle = LANES[laneOfSlot(slot)].color;
+    ctx.globalAlpha = .6;
+    ctx.fillRect(fieldL + slot * laneW + laneW / 2 - 1, 0, 2, h);
+    ctx.globalAlpha = 1;
+  }
+  // Rejilla de tiempos (la línea más fuerte cada 4 tiempos)
+  const fpb = DATA.framesPerBeat;
+  const f0 = hwFrame(h, h), f1 = hwFrame(0, h);
+  if (fpb * state.hwScale >= 6) {
+    for (let k = Math.ceil((f0 - DATA.firstBeat) / fpb); k <= Math.floor((f1 - DATA.firstBeat) / fpb); k++) {
+      const y = Math.round(hwY(DATA.firstBeat + k * fpb, h)) + .5;
+      ctx.strokeStyle = ((k % 4) + 4) % 4 === 0 ? "rgba(255,255,255,.3)" : "rgba(255,255,255,.1)";
+      ctx.beginPath();
+      ctx.moveTo(fieldL, y);
+      ctx.lineTo(fieldL + fieldW, y);
+      ctx.stroke();
+    }
+  }
+  // Inicio de la música y fin de la canción
+  for (const [frame, text] of [[LEAD_IN, "inicia la música"], [SONG_END, "fin"]]) {
+    const y = Math.round(hwY(frame, h)) + .5;
+    if (y < 0 || y > h) continue;
+    ctx.strokeStyle = css("--accent");
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(fieldL, y);
+    ctx.lineTo(fieldL + fieldW, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = css("--accent");
+    ctx.font = "10px system-ui";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(text, fieldL + 4, y - 2);
+  }
+
+  const bad = problemFrames();
+  const margin = 40 / state.hwScale;
+  // Colas
+  for (const n of notes()) {
+    if (n.end === null || n.end < f0 - margin || n.frame > f1 + margin) continue;
+    for (const lane of lanesOf(n.mask)) {
+      const x = laneX(lane, w);
+      const yTop = hwY(n.end, h), yBot = hwY(n.frame, h);
+      ctx.fillStyle = LANES[lane].color;
+      ctx.globalAlpha = .55;
+      ctx.fillRect(x - 6, yTop, 12, yBot - yTop);
+      ctx.globalAlpha = 1;
+    }
+  }
+  // Notas (las de abajo primero, así las de arriba, más lejanas, no tapan a las cercanas)
+  for (const n of notes()) {
+    if (n.frame < f0 - margin || n.frame > f1 + margin) continue;
+    const y = hwY(n.frame, h);
+    let lanes = lanesOf(n.mask);
+    if (isDrums() && lanes.includes(4)) {   // el bombo: una barra naranja de lado a lado, debajo de los pads
+      drawKick(ctx, fieldL, fieldW, y, n.star, bad.get(n.frame));
+      lanes = lanes.filter((l) => l !== 4);
+    }
+    if (lanes.length > 1) {   // un acorde se dibuja unido
+      ctx.fillStyle = "rgba(255,255,255,.55)";
+      ctx.fillRect(laneX(lanes[0], w), y - 2, laneX(lanes[lanes.length - 1], w) - laneX(lanes[0], w), 4);
+    }
+    // La marca de platillo es de la nota entera, pero solo los toms pueden serlo (la tarola nunca es un platillo)
+    for (const lane of lanes) drawGem(ctx, laneX(lane, w), y, lane, n.star, bad.get(n.frame), n.cymbal && lane !== 1);
+  }
+  // Línea de golpe con los botones
+  const hit = hwY(state.cur, h);
+  ctx.fillStyle = "rgba(255,255,255,.12)";
+  ctx.fillRect(fieldL, hit - 12, fieldW, 24);
+  for (let slot = 0; slot < 5; slot++) {
+    const lane = laneOfSlot(slot);
+    const x = laneX(lane, w);
+    ctx.strokeStyle = LANES[lane].color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, hit, 14, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.fillStyle = css("--text");
+    ctx.font = "bold 12px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(LANES[lane].pad, x, hit + 1);
+    ctx.fillStyle = css("--muted");
+    ctx.font = "10px system-ui";
+    ctx.fillText(laneName(lane), x, h - 14);
+  }
+  ctx.textAlign = "left";
+  $("hwInfo").textContent = `cuadro ${Math.round(state.cur)} · ${((state.cur - LEAD_IN) / 60).toFixed(1)} s`;
+}
+
+// --- Panel lateral -------------------------------------------------------------
+
+function legendHtml() {
+  const items = LANES.map((l, i) => `<span><i style="background:${l.color}"></i>${laneName(i)} (${l.pad})</span>`);
+  items.push("<span>★ nota de frase estelar</span>");
+  if (isDrums()) items.push("<span>◆ platillo (el mismo botón que el tom)</span>");
+  return items.join("");
+}
+
+function drawSide() {
+  $("legend").innerHTML = legendHtml();
+  const list = notes();
+  const chords = list.filter((n) => lanesOf(n.mask).length > 1).length;
+  const sustains = list.filter((n) => n.end !== null).length;
+  const stars = list.filter((n) => n.star).length;
+  $("stats").innerHTML = `<b>${list.length}</b> notas · <b>${chords}</b> acordes · <b>${sustains}</b> colas · <b>${stars}</b> notas estelares`;
+  const probs = state.problems[chartKey()] || [];
+  const ul = $("problems");
+  ul.innerHTML = "";
+  if (!probs.length) {
+    const li = document.createElement("li");
+    li.textContent = "Sin avisos: el chart se puede tocar.";
+    li.style.cursor = "default";
+    ul.append(li);
+  }
+  for (const p of probs) {
+    const li = document.createElement("li");
+    li.className = p.kind;
+    li.textContent = `cuadro ${p.frame}: ${p.text}`;
+    li.onclick = () => gotoFrame(p.frame);
+    ul.append(li);
+  }
+}
+
+function gotoFrame(frame) {
+  state.cur = Math.max(0, frame - 40 / state.hwScale * 1);
+  keepTimelineFollowing();
+  redraw();
+}
+
+function keepTimelineFollowing() {
+  const visible = ($("timeline").clientWidth - TL.labelW) / state.tlScale;
+  if (state.cur < state.tlStart || state.cur > state.tlStart + visible) state.tlStart = state.cur - visible * 0.2;
+  clampTimeline();
+}
+
+function redraw() {
+  drawTimeline();
+  drawHighway();
+  drawSide();
+  if (window.editorHooks) window.editorHooks.afterDraw();
+}
+
+// --- Interacción ----------------------------------------------------------------
+
+function zoomTimeline(factor, anchorX) {
+  const canvas = $("timeline");
+  const x = anchorX ?? TL.labelW + (canvas.clientWidth - TL.labelW) / 2;
+  const frame = tlFrame(x);
+  state.tlScale = Math.max(0.03, Math.min(6, state.tlScale * factor));
+  state.tlStart = frame - (x - TL.labelW) / state.tlScale;
+  clampTimeline();
+  redraw();
+}
+
+(function wireTimeline() {
+  const canvas = $("timeline");
+  let drag = null;
+  const pos = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const overviewFrame = (x) => ((x - TL.labelW) / (canvas.clientWidth - TL.labelW)) * (SONG_END + 60);
+  canvas.addEventListener("pointerdown", (e) => {
+    const p = pos(e);
+    const button = channelButtonAt(p.x, p.y);
+    if (button) { toggleChannel(button.id, button.kind); return; }
+    canvas.setPointerCapture(e.pointerId);
+    drag = { x0: p.x, start: state.tlStart, moved: false, overview: p.y < TL.overviewH };
+    if (drag.overview) {
+      const visible = (canvas.clientWidth - TL.labelW) / state.tlScale;
+      state.tlStart = overviewFrame(p.x) - visible / 2;
+      clampTimeline();
+      redraw();
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const p = pos(e);
+    if (drag.overview) {
+      const visible = (canvas.clientWidth - TL.labelW) / state.tlScale;
+      state.tlStart = overviewFrame(p.x) - visible / 2;
+    } else {
+      if (Math.abs(p.x - drag.x0) > 3) drag.moved = true;
+      state.tlStart = drag.start - (p.x - drag.x0) / state.tlScale;
+    }
+    clampTimeline();
+    redraw();
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    if (drag && !drag.moved && !drag.overview) {
+      state.cur = Math.max(0, tlFrame(pos(e).x));
+      redraw();
+    }
+    drag = null;
+  });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    zoomTimeline(e.deltaY < 0 ? 1.25 : 0.8, pos(e).x);
+  }, { passive: false });
+  $("zoomIn").onclick = () => zoomTimeline(1.5);
+  $("zoomOut").onclick = () => zoomTimeline(1 / 1.5);
+  $("zoomAll").onclick = () => {
+    state.tlScale = (canvas.clientWidth - TL.labelW) / (SONG_END + 60);
+    state.tlStart = 0;
+    redraw();
+  };
+})();
+
+(function wireHighway() {
+  const canvas = $("highway");
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (e.ctrlKey) {
+      state.hwScale = Math.max(0.4, Math.min(12, state.hwScale * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+    } else {
+      state.cur = Math.max(0, Math.min(SONG_END, state.cur - (e.deltaY / state.hwScale) * 0.6));
+      keepTimelineFollowing();
+    }
+    redraw();
+  }, { passive: false });
+})();
+
+// --- Arranque --------------------------------------------------------------------
+
+function init() {
+  $("title").textContent = DATA.title;
+  const bpm = (3600 / DATA.framesPerBeat).toFixed(0);
+  $("subtitle").textContent = `${DATA.name} · ${DATA.game} · ${bpm} BPM (${DATA.framesPerBeat} cuadros por tiempo) · ${(DATA.endFrame / 60).toFixed(0)} s`;
+  const inst = $("inst"), diff = $("diff");
+  for (const i of DATA.instruments) inst.append(new Option(i.name, i.name));
+  for (const d of DATA.difficulties) diff.append(new Option(`${d.name} (${d.lanes} carriles)`, d.name));
+  inst.value = state.inst;
+  diff.value = state.diff;
+  inst.onchange = () => { state.inst = inst.value; redraw(); };
+  diff.onchange = () => { state.diff = diff.value; redraw(); };
+  $("help").innerHTML = `<p><kbd>rueda</kbd> en el chart: avanza o retrocede · <kbd>Ctrl</kbd>+<kbd>rueda</kbd>: zoom</p>
+    <p>Canales: <kbd>rueda</kbd> zoom, arrastra para recorrer, clic para mover la línea de golpe.</p>`;
+  if (window.editorHooks) window.editorHooks.init();
+  state.tlScale = Math.max(state.tlScale, 0.1);
+  document.getElementById("zoomAll").click();
+  state.cur = LEAD_IN - 60;
+  keepTimelineFollowing();
+  redraw();
+}
+window.addEventListener("resize", redraw);
+window.addEventListener("DOMContentLoaded", init);
+</script>
+<script>
+"use strict";
+// --- Edición (solo si la página la sirve `<juego> edit-chart`; la versión --html es de lectura) ---
+if (DATA.editable) (function () {
+  const MIN_TAIL = 8;       // cuadros mínimos de cola
+  const SUSTAIN_GAP = 3;    // cuadros libres entre el fin de una cola y la siguiente nota del mismo carril
+  // Parejas imposibles: verde+amarillo y amarillo+naranja (izquierda+derecha de la cruz); en la batería,
+  // el bombo es solo el pie y la única imposible es verde+amarillo (ver chart.DRUM_BLOCKED_PAIRS)
+  const pairs = () => (isDrums() ? [[0, 2]] : [[0, 2], [2, 4]]);
+  // Los charts como texto con las claves en orden, para saber si cambiaron desde la última vez que se guardó
+  const canon = (charts) => JSON.stringify(Object.fromEntries(Object.keys(charts).sort().map((k) => [k, charts[k]])));
+  const ED = { sel: null, undo: [], redo: [], saved: canon(state.charts), snap: 4, drag: null, hover: null, preview: null, seq: 0, timer: 0 };
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  const chart = () => state.charts[chartKey()];
+  const lanesAllowed = () => (isDrums() ? 5 : DATA.difficulties.find((d) => d.name === state.diff).lanes);
+  const selNote = () => (ED.sel === null ? null : chart().find((n) => n.frame === ED.sel) || null);
+  const bit = (lane) => 1 << lane;
+  const count = (mask) => lanesOf(mask).length;
+
+  function blockedPair(mask) {
+    const l = lanesOf(mask);
+    return pairs().some(([a, b]) => l.includes(a) && l.includes(b));
+  }
+  function clash(a, b) {
+    // Mismo carril, o una pareja bloqueada entre un botón de una y uno de la otra (ver chart.lanes_clash)
+    if (a & b) return true;
+    return pairs().some(([x, y]) => (a >> x & 1 && b >> y & 1) || (a >> y & 1 && b >> x & 1));
+  }
+  function say(text, kind) {
+    const el = $("msg");
+    el.textContent = text;
+    el.style.color = kind === "error" ? css("--err") : kind === "ok" ? "#6be88a" : css("--muted");
+  }
+  const snapFrame = (f) => {
+    if (!ED.snap) return Math.round(f);
+    const step = DATA.framesPerBeat / ED.snap;
+    return Math.round(DATA.firstBeat + Math.round((f - DATA.firstBeat) / step) * step);
+  };
+  const clampFrame = (f) => Math.max(LEAD_IN, Math.min(SONG_END, f));
+
+  // --- Deshacer ---
+  function pushUndo() {
+    ED.undo.push({ key: chartKey(), chart: clone(chart()) });
+    if (ED.undo.length > 300) ED.undo.shift();
+    ED.redo.length = 0;
+  }
+  function restore(from, to) {
+    const entry = from.pop();
+    if (!entry) return;
+    to.push({ key: entry.key, chart: clone(state.charts[entry.key]) });
+    state.charts[entry.key] = entry.chart;
+    const [inst, diff] = entry.key.split("/");
+    state.inst = inst; state.diff = diff;
+    $("inst").value = inst; $("diff").value = diff;
+    ED.sel = null;
+    afterEdit();
+  }
+
+  // --- Cambios al chart ---
+  function sortChart() { chart().sort((a, b) => a.frame - b.frame); }
+  function afterEdit() {
+    sortChart();
+    refreshButtons();
+    redraw();
+    clearTimeout(ED.timer);
+    ED.timer = setTimeout(validate, 120);
+  }
+  function edit(fn) {
+    pushUndo();
+    fn(chart());
+    afterEdit();
+  }
+  async function validate() {
+    const key = chartKey(), seq = ++ED.seq;
+    try {
+      const res = await fetch("/api/validate", { method: "POST", body: JSON.stringify({ song: DATA.name, key, chart: state.charts[key] }) });
+      const data = await res.json();
+      if (seq === ED.seq && data.problems) { state.problems[key] = data.problems; redraw(); }
+    } catch (e) { say("No pude validar: ¿sigue abierto el servidor?", "error"); }
+  }
+  function limitEnd(note) {
+    const list = chart();
+    for (let j = list.indexOf(note) + 1; j < list.length; j++) if (clash(list[j].mask, note.mask)) return list[j].frame - SUSTAIN_GAP;
+    return Infinity;
+  }
+  function trimTails(note) {
+    // Una nota nueva corta las colas anteriores que la pisarían, como hace el generador
+    for (const n of chart()) {
+      if (n.frame < note.frame && n.end !== null && n.end > note.frame - SUSTAIN_GAP && clash(n.mask, note.mask)) {
+        n.end = note.frame - SUSTAIN_GAP;
+        if (n.end - n.frame < MIN_TAIL) n.end = null;
+      }
+    }
+    if (note.end !== null) {
+      note.end = Math.min(note.end, limitEnd(note));
+      if (note.end - note.frame < MIN_TAIL) note.end = null;
+    }
+  }
+  function placeLane(list, frame, lane, extra) {
+    // Pone un botón en `frame`: se une a la nota que ya esté ahí (acorde) o crea una nota. Devuelve la nota o null si no se puede
+    const near = list.find((n) => n.frame === frame);
+    if (near) {
+      const mask = near.mask | bit(lane);
+      if (blockedPair(mask)) { say("Esos botones no se pueden tocar juntos (izquierda + derecha de la cruz).", "error"); return null; }
+      near.mask = mask;
+      near.star = false;
+      trimTails(near);
+      return near;
+    }
+    const note = { frame, mask: bit(lane), end: null, star: false, cymbal: false, ...extra };
+    if ((note.mask & 0b01101) === 0) note.cymbal = false;   // la tarola y el bombo no son platillos
+    list.push(note);
+    trimTails(note);
+    return note;
+  }
+
+  // --- Acciones ---
+  function deleteSel() {
+    const note = selNote();
+    if (!note) return;
+    edit((list) => list.splice(list.indexOf(note), 1));
+    ED.sel = null;
+    refreshButtons();
+  }
+  function moveLane(delta) {
+    const note = selNote();
+    if (!note) return;
+    const slots = lanesOf(note.mask).map((l) => slotOf(l) + delta);   // las flechas mueven por columna (en la batería no es el carril)
+    if (slots.some((s) => s < 0 || s >= lanesAllowed())) return;
+    const lanes = slots.map(laneOfSlot);
+    const mask = lanes.reduce((m, l) => m | bit(l), 0);
+    if (blockedPair(mask)) { say("Ese carril forma una pareja imposible (izquierda + derecha).", "error"); return; }
+    edit(() => { note.mask = mask; trimTails(note); });
+  }
+  function moveFrame(sign) {
+    const note = selNote();
+    if (!note) return;
+    const step = ED.snap ? DATA.framesPerBeat / ED.snap : 1;
+    const frame = clampFrame(snapFrame(note.frame + sign * step + sign * 0.01));
+    if (frame === note.frame || chart().some((n) => n.frame === frame)) return;
+    edit(() => { if (note.end !== null) note.end += frame - note.frame; note.frame = frame; trimTails(note); });
+    ED.sel = frame;
+  }
+  function toggleStar() {
+    const note = selNote();
+    if (!note) return;
+    if (count(note.mask) > 1) { say("Un acorde no entra en una frase estelar.", "error"); return; }
+    edit(() => { note.star = !note.star; });
+  }
+  function starPhrase() {
+    const note = selNote();
+    if (!note) return;
+    const list = chart(), from = list.indexOf(note);
+    const picked = list.slice(from).filter((n) => count(n.mask) === 1).slice(0, 4);
+    if (count(note.mask) > 1 || picked.length < 4) { say("No hay 4 notas sueltas desde aquí para una frase.", "error"); return; }
+    edit(() => picked.forEach((n) => { n.star = true; }));
+  }
+  function unstarPhrase() {
+    const note = selNote();
+    if (!note || !note.star) return;
+    const list = chart();
+    let a = list.indexOf(note), b = a;
+    while (a > 0 && list[a - 1].star) a--;
+    while (b < list.length - 1 && list[b + 1].star) b++;
+    edit(() => { for (let i = a; i <= b; i++) list[i].star = false; });
+  }
+  function toggleCymbal() {
+    const note = selNote();
+    if (!note) return;
+    if (!isDrums()) { say("Los platillos solo existen en la batería.", "error"); return; }
+    if ((note.mask & 0b01101) === 0) { say("Solo un tom puede ser platillo (no la tarola ni el bombo).", "error"); return; }
+    edit(() => { note.cymbal = !note.cymbal; });
+  }
+  function toggleTail() {
+    const note = selNote();
+    if (!note) return;
+    if (isDrums()) { say("La batería no usa colas.", "error"); return; }
+    edit(() => {
+      if (note.end !== null) { note.end = null; return; }
+      note.end = Math.min(note.frame + DATA.framesPerBeat, limitEnd(note));
+      if (note.end - note.frame < MIN_TAIL) { note.end = null; say("No cabe una cola: la siguiente nota del carril está muy cerca.", "error"); }
+    });
+  }
+  function joinNext() {
+    const note = selNote();
+    if (!note) return;
+    const list = chart(), next = list[list.indexOf(note) + 1];
+    if (!next) return;
+    const mask = note.mask | next.mask;
+    if (blockedPair(mask)) { say("Esas dos notas juntas serían una pareja imposible (izquierda + derecha).", "error"); return; }
+    edit(() => {
+      note.mask = mask;
+      note.star = false;
+      list.splice(list.indexOf(next), 1);
+      trimTails(note);
+    });
+  }
+  function resetChart() {
+    if (!confirm(`¿Descartar todas las ediciones de ${chartKey()} y volver al chart automático?`)) return;
+    pushUndo();
+    state.charts[chartKey()] = clone(DATA.auto[chartKey()]);
+    ED.sel = null;
+    afterEdit();
+  }
+
+  // --- Ratón sobre el chart ---
+  const canvas = $("highway");
+  const geom = () => ({ w: canvas.clientWidth, h: HW_HEIGHT });
+  const pointer = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  function laneAt(x) {
+    const { w } = geom();
+    const slot = Math.floor((x - HW.padX) / ((w - 2 * HW.padX) / 5));
+    return slot < 0 || slot > 4 ? -1 : laneOfSlot(slot);
+  }
+  function hitNote(p) {
+    const { w, h } = geom();
+    let best = null, bestDist = 1e9;
+    for (const n of chart()) {
+      const y = hwY(n.frame, h);
+      if (Math.abs(y - p.y) > 11) continue;
+      for (const lane of lanesOf(n.mask)) {
+        const dx = Math.abs(laneX(lane, w) - p.x);
+        if (dx <= 18 && dx + Math.abs(y - p.y) < bestDist) { best = { note: n, lane }; bestDist = dx + Math.abs(y - p.y); }
+      }
+    }
+    return best;
+  }
+  const handlePos = (note) => {
+    const { w, h } = geom();
+    return { x: laneX(lanesOf(note.mask)[0], w) + 0, y: hwY(note.end !== null ? note.end : note.frame + MIN_TAIL * 2, h) };
+  };
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const p = pointer(e), { h } = geom();
+    const sel = selNote();
+    if (sel && !isDrums()) {
+      const hp = handlePos(sel);
+      if (Math.abs(hp.x - p.x) <= 10 && Math.abs(hp.y - p.y) <= 9) {
+        pushUndo();
+        ED.drag = { type: "tail", note: sel, before: JSON.stringify(sel) };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
+    const hit = hitNote(p);
+    if (hit) {
+      if (e.shiftKey) {
+        edit((list) => {
+          if (count(hit.note.mask) > 1) hit.note.mask &= ~bit(hit.lane);
+          else list.splice(list.indexOf(hit.note), 1);
+        });
+        if (!chart().includes(hit.note)) ED.sel = null;
+        refreshButtons();
+        return;
+      }
+      ED.sel = hit.note.frame;
+      ED.drag = { type: "move", note: hit.note, lane: hit.lane, x0: p.x, y0: p.y, moved: false };
+      canvas.setPointerCapture(e.pointerId);
+      refreshButtons();
+      redraw();
+      return;
+    }
+    const lane = laneAt(p.x);
+    if (lane < 0) return;
+    if (lane >= lanesAllowed()) { say(`La dificultad ${state.diff} solo usa ${lanesAllowed()} carriles.`, "error"); return; }
+    const frame = clampFrame(snapFrame(hwFrame(p.y, h)));
+    pushUndo();
+    const note = placeLane(chart(), frame, lane);
+    if (!note) { ED.undo.pop(); return; }
+    ED.sel = note.frame;
+    afterEdit();
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    const p = pointer(e), { h } = geom();
+    const drag = ED.drag;
+    if (drag && drag.type === "tail") {
+      const f = snapFrame(hwFrame(p.y, h));
+      let end = f - drag.note.frame < MIN_TAIL ? null : Math.min(f, limitEnd(drag.note));
+      if (end !== null && end - drag.note.frame < MIN_TAIL) end = null;
+      drag.note.end = end;
+      redraw();
+    } else if (drag && drag.type === "move") {
+      if (Math.abs(p.x - drag.x0) + Math.abs(p.y - drag.y0) > 5) drag.moved = true;
+      if (drag.moved) {
+        const lane = Math.max(0, Math.min(lanesAllowed() - 1, laneAt(p.x) < 0 ? drag.lane : laneAt(p.x)));
+        ED.preview = { lane, frame: clampFrame(snapFrame(hwFrame(p.y, h))) };
+        redraw();
+      }
+    } else {
+      const lane = laneAt(p.x);
+      ED.hover = lane >= 0 && lane < lanesAllowed() && !hitNote(p) ? { lane, frame: clampFrame(snapFrame(hwFrame(p.y, h))) } : null;
+      redraw();
+    }
+  });
+  canvas.addEventListener("pointerleave", () => { if (!ED.drag) { ED.hover = null; redraw(); } });
+
+  canvas.addEventListener("pointerup", () => {
+    const drag = ED.drag;
+    ED.drag = null;
+    const target = ED.preview;
+    ED.preview = null;
+    if (!drag) return;
+    if (drag.type === "tail") {
+      if (JSON.stringify(drag.note) === drag.before) ED.undo.pop(); else afterEdit();
+      return;
+    }
+    if (!drag.moved || !target || (target.frame === drag.note.frame && target.lane === drag.lane)) { redraw(); return; }
+    const note = drag.note, delta = target.frame - note.frame;
+    const other = chart().find((n) => n.frame === target.frame && n !== note);
+    const joined = other ? other.mask | bit(target.lane) : 0;
+    if (other && blockedPair(joined)) { say("Esas notas juntas serían una pareja imposible (izquierda + derecha).", "error"); redraw(); return; }
+    pushUndo();
+    const list = chart();
+    const wholeNote = count(note.mask) === 1;
+    const extra = wholeNote ? { end: note.end === null ? null : note.end + delta, star: note.star, cymbal: !!note.cymbal } : {};
+    if (wholeNote) list.splice(list.indexOf(note), 1); else note.mask &= ~bit(drag.lane);
+    const placed = placeLane(list, target.frame, target.lane, extra);
+    ED.sel = placed ? placed.frame : null;
+    afterEdit();
+  });
+
+  // --- Teclado ---
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest("input, select, textarea")) return;
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && key === "z" && !e.shiftKey) { e.preventDefault(); restore(ED.undo, ED.redo); return; }
+    if ((e.ctrlKey || e.metaKey) && (key === "y" || (key === "z" && e.shiftKey))) { e.preventDefault(); restore(ED.redo, ED.undo); return; }
+    if ((e.ctrlKey || e.metaKey) && key === "s") { e.preventDefault(); save(false); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const actions = {
+      delete: deleteSel, backspace: deleteSel, s: toggleStar, t: toggleTail, j: joinNext, p: toggleCymbal,
+      arrowleft: () => moveLane(-1), arrowright: () => moveLane(1), arrowup: () => moveFrame(1), arrowdown: () => moveFrame(-1),
+      escape: () => { ED.sel = null; refreshButtons(); redraw(); },
+    };
+    if (actions[key] && (selNote() || key === "escape")) { e.preventDefault(); actions[key](); }
+  });
+
+  // --- Guardar y exportar ---
+  // La asignación de la batería (drums.json) se guarda junto con los charts, solo si ya existe o se tocó
+  const drumData = DATA.drums;
+  state.drums = { assignment: JSON.parse(JSON.stringify(drumData.assignment)), saved: drumData.suggested ? null : JSON.stringify(drumData.assignment), touched: false };
+  const drumsToSave = () => drumData.groups.length > 0 && (state.drums.touched || state.drums.saved !== null);
+  const drumsDirty = () => drumsToSave() && JSON.stringify(state.drums.assignment) !== state.drums.saved;
+  const isDirty = () => canon(state.charts) !== ED.saved || drumsDirty();
+  async function post(url) {
+    const body = { song: DATA.name, charts: state.charts };
+    if (drumsToSave()) body.drums = state.drums.assignment;
+    const res = await fetch(url, { method: "POST", body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data.message;
+  }
+  async function save(exportAsm) {
+    try {
+      const message = await post(exportAsm ? "/api/export" : "/api/save");
+      ED.saved = canon(state.charts);
+      if (drumsToSave()) state.drums.saved = JSON.stringify(state.drums.assignment);
+      say(message, "ok");
+    } catch (e) { say(`No se guardó: ${e.message}`, "error"); }
+    refreshButtons();
+  }
+  // --- Batería: qué papel tiene cada grupo de golpes (canal + tono o sample + instrumento) ---
+  function renderDrumPanel() {
+    const box = $("drumBox");
+    box.hidden = drumData.groups.length === 0;
+    if (box.hidden) return;
+    $("drumNote").textContent = drumData.suggested && !state.drums.touched
+      ? "Sugerencia automática: revísala y guarda para conservarla" : "";
+    const body = $("drumBody");
+    body.innerHTML = "";
+    const table = document.createElement("table");
+    table.className = "drumtable";
+    // La columna Instrumento solo si la fuente nombra los instrumentos (FamiStudio, VGM con instrumentos)
+    const withInstrument = PROFILE.drumInstrument !== false;
+    table.innerHTML = "<thead><tr><th>Canal</th><th>Tono / sample</th>" + (withInstrument ? "<th>Instrumento</th>" : "")
+      + "<th>Golpes</th><th>Papel</th><th>Platillo</th></tr></thead>";
+    const tbody = document.createElement("tbody");
+    for (const g of drumData.groups) {
+      const item = state.drums.assignment[g.key] || { lane: null, cymbal: false };
+      const tr = document.createElement("tr");
+      const roleSelect = document.createElement("select");
+      roleSelect.append(new Option("Sin usar", ""));
+      for (const r of drumData.roles) roleSelect.append(new Option(r.label, r.id));
+      roleSelect.value = item.lane || "";
+      const cymbal = document.createElement("input");
+      cymbal.type = "checkbox";
+      cymbal.checked = !!item.cymbal;
+      cymbal.disabled = !item.lane || item.lane === "kick" || item.lane === "snare";
+      cymbal.title = "Los golpes de este grupo son platillos (se distinguen en experto)";
+      roleSelect.onchange = () => setGroup(g.key, { lane: roleSelect.value || null, cymbal: ["kick", "snare", ""].includes(roleSelect.value) ? false : cymbal.checked });
+      cymbal.onchange = () => setGroup(g.key, { lane: roleSelect.value || null, cymbal: cymbal.checked });
+      const channel = (CHANNELS.find((c) => c.id === g.channel) || { label: g.channel }).label;
+      const cells = withInstrument ? [channel, g.tone, g.instrument || "—"] : [channel, g.tone];
+      for (const text of [...cells, `${g.count} (${g.avgDuration} cuadros)`]) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        tr.append(td);
+      }
+      for (const control of [roleSelect, cymbal]) {
+        const td = document.createElement("td");
+        td.append(control);
+        tr.append(td);
+      }
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    body.append(table);
+  }
+
+  async function setGroup(key, item) {
+    const saved = JSON.parse(ED.saved);
+    const lost = Object.keys(state.charts).some((k) => k.startsWith("bateria/") && JSON.stringify(state.charts[k]) !== JSON.stringify(saved[k]));
+    if (lost && !confirm("Cambiar la asignación rehace los charts de batería: se pierden las ediciones de batería que no hayas guardado. ¿Seguir?")) { renderDrumPanel(); return; }
+    state.drums.assignment[key] = item;
+    state.drums.touched = true;
+    try {
+      const res = await fetch("/api/drums", { method: "POST", body: JSON.stringify({ song: DATA.name, assignment: state.drums.assignment }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      for (const k of Object.keys(state.charts)) if (k.startsWith("bateria/")) { delete state.charts[k]; delete DATA.auto[k]; delete state.problems[k]; }
+      Object.assign(state.charts, data.charts);
+      Object.assign(DATA.auto, data.auto);
+      Object.assign(state.problems, data.problems);
+      // Lo que haya guardado de la batería ya no vale como "último guardado": al guardar se escribe lo nuevo
+      for (const k of Object.keys(saved)) if (k.startsWith("bateria/")) delete saved[k];
+      Object.assign(saved, JSON.parse(JSON.stringify(data.charts)));   // lo que ya hay en disco (automático + edits.json)
+      ED.saved = canon(saved);
+      ED.undo = ED.undo.filter((u) => !u.key.startsWith("bateria/"));
+      ED.redo = ED.redo.filter((u) => !u.key.startsWith("bateria/"));
+      syncInstruments();
+      say(Object.keys(data.charts).length ? "Charts de batería rehechos con la nueva asignación." : "Sin papeles asignados: no hay chart de batería.", "ok");
+    } catch (e) { say(`No pude rehacer la batería: ${e.message}`, "error"); }
+    renderDrumPanel();
+    refreshButtons();
+    redraw();
+  }
+
+  function syncInstruments() {
+    // "bateria" está en el menú solo si hay un chart de batería
+    const inst = $("inst");
+    const has = Object.keys(state.charts).some((k) => k.startsWith("bateria/"));
+    const option = [...inst.options].find((o) => o.value === "bateria");
+    if (has && !option) inst.append(new Option("bateria", "bateria"));
+    if (!has && option) option.remove();
+    if (!has && state.inst === "bateria") { state.inst = inst.options[0].value; inst.value = state.inst; ED.sel = null; }
+  }
+
+  window.addEventListener("beforeunload", (e) => { if (isDirty() && !window.__leaving) { e.preventDefault(); e.returnValue = ""; } });
+  window.editorDirty = isDirty;                // lo usa el menú Archivo antes de abrir o cerrar otra canción
+  window.editorActions = { save };
+
+  // --- Botones ---
+  const buttons = {};
+  function button(parent, label, title, onclick) {
+    const b = document.createElement("button");
+    b.textContent = label; b.title = title; b.onclick = onclick;
+    parent.append(b);
+    return b;
+  }
+  function refreshButtons() {
+    const note = selNote();
+    for (const id of ["del", "join", "star", "phrase", "unphrase"]) buttons[id].disabled = !note;
+    buttons.tail.disabled = !note || isDrums();
+    buttons.cymbal.disabled = !note || !isDrums();
+    buttons.undo.disabled = !ED.undo.length;
+    buttons.redo.disabled = !ED.redo.length;
+    buttons.save.disabled = !isDirty();
+    $("dirty").textContent = isDirty() ? "cambios sin guardar" : "";
+  }
+  window.editorHooks = {
+    init() {
+      const actions = $("actions");
+      actions.innerHTML = '<span id="dirty" style="color:var(--warn);margin-right:8px"></span>';
+      buttons.save = button(actions, "Guardar", "Guarda las ediciones en edits.json (Ctrl+S)", () => save(false));
+      button(actions, PROFILE.exportLabel, PROFILE.exportTitle, () => save(true));
+      const tools = $("editTools");
+      tools.innerHTML = "<h3>Edición</h3>";
+      const row = document.createElement("div");
+      row.className = "tools";
+      tools.append(row);
+      buttons.undo = button(row, "Deshacer", "Ctrl+Z", () => restore(ED.undo, ED.redo));
+      buttons.redo = button(row, "Rehacer", "Ctrl+Y", () => restore(ED.redo, ED.undo));
+      buttons.del = button(row, "Borrar nota", "Supr", deleteSel);
+      buttons.join = button(row, "Juntar con la siguiente", "J: las dos notas pasan a ser un acorde", joinNext);
+      buttons.tail = button(row, "Cola", "T: poner o quitar la cola", toggleTail);
+      buttons.star = button(row, "★ Nota", "S: marcar o desmarcar la nota como estelar", toggleStar);
+      buttons.phrase = button(row, "★ Frase de 4", "Marca esta nota y las 3 sueltas siguientes", starPhrase);
+      buttons.unphrase = button(row, "Quitar frase", "Desmarca toda la frase estelar de la nota", unstarPhrase);
+      buttons.cymbal = button(row, "◆ Platillo", "P: (batería) la nota es un platillo en vez de un tom; solo se distingue en experto", toggleCymbal);
+      button(row, "Restaurar chart", "Descarta las ediciones de este instrumento y dificultad", resetChart);
+      const grid = document.createElement("label");
+      grid.innerHTML = 'Rejilla <select id="snap"><option value="1">tiempo</option><option value="2">1/2</option><option value="4" selected>1/4</option><option value="8">1/8</option><option value="0">cuadro</option></select>';
+      tools.append(grid);
+      $("snap").onchange = (e) => { ED.snap = Number(e.target.value); };
+      $("help").innerHTML = `<p><b>Clic</b> en un carril vacío: agrega una nota (en el cuadro de otra nota: la vuelve acorde). <b>Clic</b> en una nota: la selecciona; arrástrala para moverla de carril o de tiempo.</p>
+        <p><b>Mayús+clic</b>: quita esa nota (o ese botón de un acorde). El cuadrito blanco sobre la nota elegida alarga o acorta su cola.</p>
+        <p><kbd>←</kbd><kbd>→</kbd> carril · <kbd>↑</kbd><kbd>↓</kbd> tiempo · <kbd>Supr</kbd> borra · <kbd>J</kbd> juntar · <kbd>T</kbd> cola · <kbd>S</kbd> estrella · <kbd>P</kbd> platillo (batería) · <kbd>Ctrl+Z</kbd>/<kbd>Ctrl+Y</kbd> · <kbd>Ctrl+S</kbd> guarda</p>
+        <p><kbd>rueda</kbd>: avanza · <kbd>Ctrl</kbd>+<kbd>rueda</kbd>: zoom. En la línea de tiempo: rueda = zoom, arrastrar = recorrer.</p>`;
+      renderDrumPanel();
+      if (DATA.warnings.length) say("Avisos al aplicar edits.json: " + DATA.warnings.join("; "), "error");
+      refreshButtons();
+      $("inst").addEventListener("change", () => { ED.sel = null; refreshButtons(); });
+      $("diff").addEventListener("change", () => { ED.sel = null; refreshButtons(); });
+    },
+    afterDraw() {
+      const { ctx, w, h } = fit($("highway"), HW_HEIGHT);
+      const note = selNote();
+      if (note) {
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+        for (const lane of lanesOf(note.mask)) { roundRect(ctx, laneX(lane, w) - 20, hwY(note.frame, h) - 11, 40, 22, 8); ctx.stroke(); }
+        if (!isDrums()) {
+          const hp = handlePos(note);
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(hp.x - 7, hp.y - 4, 14, 8);
+        }
+        ctx.lineWidth = 1;
+      }
+      for (const [spot, alpha] of [[ED.hover, 0.35], [ED.preview, 0.7]]) {
+        if (!spot) continue;
+        ctx.globalAlpha = alpha;
+        drawGem(ctx, laneX(spot.lane, w), hwY(spot.frame, h), spot.lane, false, null);
+        ctx.globalAlpha = 1;
+      }
+    },
+  };
+})();
+</script>
+<script>
+__PLAYER__
+</script>
+<script>
+"use strict";
+// --- Escuchar: el reproductor del juego toca la canción desde la línea de golpe ---
+// Cada juego trae su emulación del chip y un adaptador que define BandPlayer:
+//   BandPlayer.FPS                          cuadros por segundo de la consola
+//   BandPlayer.render(player, DATA, opts)   -> Promise<{ audio: Float32Array, stems: [...], sampleRate }>
+//     player = lo que responde /api/player; opts = { sampleRate, onProgress, yieldFn }
+if (DATA.editable && DATA.player && window.BandPlayer) (function () {
+  const FPS = BandPlayer.FPS;
+  const P = { ctx: null, buffer: null, preparing: null, source: null, playing: false, t0: 0, cur0: 0, expected: 0, raf: 0 };
+  let button;
+
+  function status(text, bad) {
+    const el = $("msg");
+    el.textContent = text;
+    el.style.color = bad ? css("--err") : css("--muted");
+  }
+
+  async function prepare() {
+    // Pide el flujo de la música al servidor y toca la canción completa una vez (con un audio por canal)
+    if (P.buffer) return;
+    if (!P.preparing) {
+      P.preparing = (async () => {
+        status("Preparando el audio…");
+        const res = await fetch("/api/player");
+        const player = await res.json();
+        if (!res.ok) throw new Error(player.error || res.statusText);
+        const result = await BandPlayer.render(player, DATA, {
+          sampleRate: 44100,
+          onProgress: (f) => status(`Preparando el audio… ${Math.round(f * 100)}%`),
+          yieldFn: () => new Promise((r) => setTimeout(r)),
+        });
+        const buffer = P.ctx.createBuffer(1, result.audio.length, result.sampleRate);
+        buffer.copyToChannel(result.audio, 0);
+        P.full = buffer;
+        P.stems = result.stems;
+        P.rate = result.sampleRate;
+        P.mixes = new Map();
+        P.buffer = currentBuffer();
+        status("");
+      })().catch((e) => { P.preparing = null; throw e; });
+    }
+    await P.preparing;
+  }
+
+  // El audio con los canales que se oyen: todos = la mezcla completa; si no, la suma de los de cada canal
+  // (un canal que no suena en toda la canción no trae audio). PROFILE.stems dice qué canales del chart suenan en
+  // cada audio del reproductor (en la Game Boy, el ruido y el DPCM van los dos al CH4); sin él, uno por canal.
+  const STEMS = PROFILE.stems || CHANNELS.map((c) => [c.id]);
+  const STEM_SCALE = PROFILE.stemScale ?? 1 / 32767;
+  function currentBuffer() {
+    const audible = STEMS.map((ids) => ids.some(isAudible));
+    if (audible.every(Boolean)) return P.full;
+    const key = audible.map((a) => (a ? 1 : 0)).join("");
+    if (!P.mixes.has(key)) {
+      if (P.mixes.size >= 8) P.mixes.delete(P.mixes.keys().next().value);
+      const sum = new Float32Array(P.full.length);
+      audible.forEach((on, c) => {
+        const stem = P.stems[c];
+        if (on && stem) for (let i = 0; i < sum.length; i++) sum[i] += stem[i] * STEM_SCALE;
+      });
+      for (let i = 0; i < sum.length; i++) sum[i] = Math.max(-1, Math.min(1, sum[i]));
+      const buffer = P.ctx.createBuffer(1, sum.length, P.rate);
+      buffer.copyToChannel(sum, 0);
+      P.mixes.set(key, buffer);
+    }
+    return P.mixes.get(key);
+  }
+
+  window.onChannelsChanged = () => {
+    if (!P.full) return;   // aún no hay audio: se aplica al prepararlo
+    P.buffer = currentBuffer();
+    if (P.playing) startAt(state.cur);
+  };
+
+  function stopSource() {
+    if (P.source) { try { P.source.stop(); } catch (e) { /* ya terminó */ } P.source.disconnect(); P.source = null; }
+  }
+
+  function startAt(frame) {
+    // La música empieza en el cuadro LEAD_IN: antes de él solo corre el reloj
+    stopSource();
+    P.cur0 = frame;
+    P.t0 = P.ctx.currentTime + 0.05;
+    const source = P.ctx.createBufferSource();
+    source.buffer = P.buffer;
+    source.connect(P.ctx.destination);
+    const lead = Math.max(0, LEAD_IN - frame) / FPS, offset = Math.max(0, frame - LEAD_IN) / FPS;
+    if (offset < P.buffer.duration) source.start(P.t0 + lead, offset);
+    P.source = source;
+    P.expected = frame;
+  }
+
+  function tick() {
+    if (!P.playing) return;
+    if (Math.abs(state.cur - P.expected) > 1.5) startAt(state.cur);   // alguien movió la línea de golpe: seguir desde ahí
+    const frame = P.cur0 + Math.max(0, P.ctx.currentTime - P.t0) * FPS;
+    if (frame >= SONG_END + 30) { pause(); return; }
+    state.cur = P.expected = frame;
+    keepTimelineFollowing();
+    redraw();
+    P.raf = requestAnimationFrame(tick);
+  }
+
+  async function play() {
+    if (P.playing) return;
+    try {
+      if (!P.ctx) P.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (P.ctx.state === "suspended") await P.ctx.resume();
+      await prepare();
+    } catch (e) { status(`No pude preparar el audio: ${e.message}`, true); return; }
+    if (state.cur >= SONG_END) state.cur = LEAD_IN - 60;
+    P.playing = true;
+    startAt(state.cur);
+    button.textContent = "⏸ Pausa";
+    P.raf = requestAnimationFrame(tick);
+  }
+
+  function pause() {
+    P.playing = false;
+    cancelAnimationFrame(P.raf);
+    stopSource();
+    if (button) button.textContent = "▶ Escuchar";
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    button = document.createElement("button");
+    button.textContent = "▶ Escuchar";
+    button.title = `${PROFILE.playerTitle} desde la línea de golpe (Espacio)`;
+    button.onclick = () => (P.playing ? pause() : play());
+    $("playslot").append(button);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey || e.target.closest("input, select, textarea, dialog")) return;
+    e.preventDefault();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    if (P.playing) pause(); else play();
+  });
+  window.addEventListener("beforeunload", pause);
+  // Teclas 1-9, 0 y -: silenciar los canales en su orden (hasta 11; con Mayús: dejar solo ese)
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest("input, select, textarea, dialog")) return;
+    const c = e.code.match(/^(?:Digit|Numpad)([0-9])$/);
+    const index = c ? (Number(c[1]) + 9) % 10 : (e.code === "Minus" || e.code === "NumpadSubtract") ? 10 : -1;
+    if (index >= 0 && index < CHANNELS.length) { e.preventDefault(); toggleChannel(CHANNELS[index].id, e.shiftKey ? "solo" : "mute"); }
+  });
+})();
+</script>
+__MENU__
+</body>
+</html>

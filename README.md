@@ -11,6 +11,9 @@ Hoy trae:
   GD3, sin interpretarlos. Cada juego decide qué hacer con eso (GENBand y NGBand ya leen así).
 - **Detección del juego destino** (`bandcore.detect`): de los chips que suenan, la consola de origen y para qué
   juego sirve, en modo nativo (las escrituras tal cual) o con arreglo (las notas a otro chip).
+- **Páginas del editor de charts** (`bandcore.editor`): `editor.html`, `home.html` y el menú Archivo, iguales en
+  los cuatro juegos. Cada juego las sirve con su perfil (nombre, botones, canales del chip, textos de exportar e
+  importar) y su reproductor para "Escuchar", que define `window.BandPlayer` (ver `src/bandcore/editor/__init__.py`).
 
 ```bash
 uv sync

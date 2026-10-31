@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__GAME__ - editor de charts</title>
+<style>
+  :root {
+    --bg: #14161c; --panel: #1d2029; --line: #2e3340; --text: #dfe3ee; --muted: #8b93a7;
+    --accent: #6aa8ff; --err: #ff5d5d; --warn: #ffb347;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, Segoe UI, sans-serif; }
+  header { display: flex; gap: 16px; align-items: center; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  select, button, input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  main { padding: 48px 16px; text-align: center; color: var(--muted); }
+  main button { margin: 6px; padding: 8px 18px; }
+</style>
+</head>
+<body>
+<header><h1>__GAME__ &middot; editor de charts</h1><span id="menuslot"></span></header>
+<main>
+  <p>No hay ninguna canción abierta.</p>
+  <button onclick="fileMenu.open()">Abrir canción…</button>
+  <button id="homeNew" onclick="fileMenu.create()">Nueva canción…</button>
+</main>
+<script>
+const PROFILE = __PROFILE__;
+const DATA = __DATA__;
+// Sin importador en el editor: se importa desde la línea de comandos
+if (!PROFILE.import) {
+  document.getElementById("homeNew").remove();
+  document.querySelector("main p").append(" Importa una con ", Object.assign(document.createElement("code"), { textContent: `${PROFILE.cli} import-song` }), ".");
+}
+</script>
+__MENU__
+</body>
+</html>
