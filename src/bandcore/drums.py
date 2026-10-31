@@ -88,7 +88,9 @@ def build_drum_chart(hits: list[Hit], difficulty_name: str, grid: BeatGrid, lead
     3. Se quitan momentos hasta que ninguno quede a menos de min_gap cuadros de otro, conservando los
        de los tiempos fuertes y los de bombo y tarola.
     4. Los platillos solo se marcan en las dificultades Pro (PRO_CYMBALS).
-    (GBBand usa su propia versión: además separa las gemas del mismo carril para su autopista corta.)"""
+    (GBBand usa su propia versión: además separa las gemas del mismo carril para su autopista corta, lo que quita
+    carriles de la máscara después de elegirlos; por eso allá el platillo revisa que su carril siga en la máscara.
+    Aquí la máscara sale de los mismos carriles que deciden el platillo, así que no hace falta.)"""
     difficulty = next(d for d in DIFFICULTIES if d.name == difficulty_name)
     fold, max_buttons = FOLD[difficulty_name], MAX_BUTTONS[difficulty_name]
     moments: list[dict] = []   # {"frame", "lanes": {lane: (peso, platillo)}}
