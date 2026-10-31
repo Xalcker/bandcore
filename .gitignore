@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+# VGM comerciales para probar los lectores: cada quien pone los suyos, nunca van a git
+src_vgm/
