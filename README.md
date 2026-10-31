@@ -17,6 +17,11 @@ Hoy trae:
 - **Servidor del editor** (`bandcore.editor.server`): las rutas de la página (abrir, importar, validar, guardar,
   exportar, batería, Escuchar), solo en 127.0.0.1 y solo desde la propia página. Cada juego implementa una subclase de
   `EditorGame` con cómo carga, genera y exporta sus canciones.
+- **Generador de charts** (`bandcore.chart`): la nota (`Note`, `ChartNote`), las dificultades, la rejilla de tiempos,
+  reducir y repartir notas en carriles, acordes, colas, frases estelares y el formato de 2 bytes por entrada. Cada
+  juego conserva solo cómo escribe sus charts (chart.s, .bin, song.c) y sus reglas extra (GBBand separa más las gemas).
+- **Batería** (`bandcore.drums`): papeles, `drums.json` y el chart de batería. Agrupar los golpes y sugerir papeles
+  depende de los canales de cada chip y sigue en cada juego.
 - **Ediciones de charts** (`bandcore.chartedit`): `edits.json`, aplicar y comparar ediciones y los avisos de lo que
   no se puede tocar. Con la nota (`bandcore.chart.ChartNote`) y las reglas de la cruz del control (`check_playable`).
   Leer los charts ya exportados (chart.s del NES, .bin de la Game Boy) sigue en cada juego.
