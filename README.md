@@ -45,13 +45,18 @@ uv run band inspect *.vgz --json
 uv run pytest
 ```
 
-| Chip del VGM | Consola | Destino nativo |
-|---|---|---|
-| YM2612 + SN76489 | Mega Drive / Genesis | GENBand (listo) |
-| SN76489 | Master System / Game Gear | GENBand (listo, solo PSG) |
-| YM2610 | Neo Geo | NGBand (listo) |
-| GB DMG | Game Boy | GBBand (pendiente) |
-| NES APU | NES | NESBand (pendiente) |
+| Chip del VGM | Consola | Destino nativo | Notas para arreglos |
+|---|---|---|---|
+| YM2612 + SN76489 | Mega Drive / Genesis | GENBand | `genband export-notes` |
+| SN76489 | Master System / Game Gear | GENBand (solo PSG) | `genband export-notes` |
+| YM2610 | Neo Geo | NGBand | `ngband export-notes` |
+| GB DMG | Game Boy | GBBand | `gbband export-notes` |
+| NES APU | NES | NESBand (sin DPCM ni FDS) | `gbband export-notes` |
+| YM2151 | Arcade (CPS1, System 16) | — | pendiente: nadie saca sus notas |
+
+Con las notas, cualquier consola sirve de destino: NESBand, GBBand y NGBand con `band famistudio`, y GENBand con
+`audio/arreglo_fm.py`, los dos con timbre A o B. Las 12 direcciones entre las cuatro consolas están probadas
+(importan con sus charts y suenan en el reproductor del editor).
 
 ## Uso desde un juego
 

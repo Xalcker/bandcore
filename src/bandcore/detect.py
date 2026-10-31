@@ -1,8 +1,8 @@
 """Para qué juego sirve un VGM: de los chips que suenan, la consola y los destinos posibles.
 
 Un destino es "nativo" si el chip del VGM es el de la consola (se tocan sus escrituras tal cual y suena igual al
-original) o "arreglo" si hay que pasar las notas a otro chip (con pérdida). Cada destino dice además si el juego ya
-lo soporta hoy o si está pendiente.
+original) o "arreglo" si hay que pasar las notas a otro chip (con pérdida). Cada destino dice además si ya se puede
+hacer y con qué: un arreglo está listo cuando algún juego saca las notas de ese chip (`export-notes`).
 """
 
 from __future__ import annotations
@@ -77,6 +77,14 @@ def _system(chips: set[str], vgm: Vgm) -> str:
     return "desconocido"
 
 
+# Quién saca las notas (bandcore.notes) de cada chip, para arreglarlas en otra consola
+EXPORTERS = (
+    ({"nes_apu", "gb_dmg"}, "gbband export-notes"),
+    ({"ym2612", "sn76489"}, "genband export-notes"),
+    ({"ym2610"}, "ngband export-notes"),
+)
+
+
 def analyze(vgm: Vgm) -> Report:
     chips = vgm.chips()
     present = set(chips)
@@ -96,19 +104,27 @@ def analyze(vgm: Vgm) -> Report:
         targets.append(Target("GBBand", NATIVE, True))
     if "nes_apu" in present:
         covered.add("nes_apu")
-        fds = "; el canal FDS se pierde" if vgm.flags.get("nes_apu", 0) & 2 else ""
-        targets.append(Target("NESBand", NATIVE, False, "hoy importa NSF; falta leer el APU desde VGM" + fds))
-        targets.append(Target("GBBand", ARRANGED, False, "GBBand ya arregla NES -> GB desde NSF; falta desde VGM" + fds))
+        lost = [what for what, there in (("el DPCM", any(b.type == 0xC2 for b in vgm.blocks)),
+                                         ("el canal FDS", vgm.flags.get("nes_apu", 0) & 2)) if there]
+        targets.append(Target("NESBand", NATIVE, True, f"se pierde {' y '.join(lost)}" if lost else ""))
+        targets.append(Target("GBBand", ARRANGED, True, "gbband import-song lo arregla directo"))
     if "ym2151" in present:
         covered.add("ym2151")
         targets.append(Target("GENBand", ARRANGED, False, "FM de 4 operadores como el YM2612: traducir instrumentos"))
 
-    # Arreglos por la IR (notas a otro chip): pendientes para cualquier origen con notas
+    # Arreglos (notas a otro chip): listos si el chip de origen tiene export-notes (bandcore.notes)
+    exporter = next((tool for chips_, tool in EXPORTERS if present & chips_), None)
     if covered:
         games = {t.game for t in targets}
         for game in ("GENBand", "NGBand", "GBBand", "NESBand"):
-            if game not in games:
-                targets.append(Target(game, ARRANGED, False, "por la IR: notas a otro chip"))
+            if game in games:
+                continue
+            if exporter is None:
+                targets.append(Target(game, ARRANGED, False, "falta sacar las notas de este chip"))
+            elif game == "GENBand":
+                targets.append(Target(game, ARRANGED, True, f"{exporter} + audio/arreglo_fm.py, timbre A o B"))
+            else:
+                targets.append(Target(game, ARRANGED, True, f"{exporter} + band famistudio, timbre A o B"))
 
     lost = [c for c in chips if c not in covered]
     return Report(_system(present, vgm), chips, lost, targets)

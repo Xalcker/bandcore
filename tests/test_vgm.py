@@ -144,11 +144,22 @@ def test_neo_geo_is_native_for_ngband():
     assert system == "Neo Geo" and got[0] == ("NGBand", "nativo", True)
 
 
-def test_game_boy_and_nes_are_pending():
+def test_game_boy_and_nes_are_native():
     system, got = targets(make_vgm(bytes([0xB3, 0x12, 0x80]), {GB: 4194304}))
     assert system.startswith("Game Boy") and got[0] == ("GBBand", "nativo", True)
     system, got = targets(make_vgm(bytes([0xB4, 0x15, 0x0F]), {NES: 1789772}))
-    assert system.startswith("NES") and got[:2] == [("NESBand", "nativo", False), ("GBBand", "arreglo", False)]
+    assert system.startswith("NES") and got[:2] == [("NESBand", "nativo", True), ("GBBand", "arreglo", True)]
+
+
+def test_arrangements_are_ready_for_the_four_chips():
+    for body, clocks in ((bytes([0x52, 0x28, 0xF0]), {YM2612: 7670453}), (bytes([0x58, 0x28, 0xF1]), {YM2610: 8_000_000}),
+                         (bytes([0xB3, 0x12, 0x80]), {GB: 4194304}), (bytes([0xB4, 0x15, 0x0F]), {NES: 1789772})):
+        report = detect.analyze(parse_vgm(make_vgm(body, clocks)))
+        assert len(report.targets) == 4 and all(t.ready for t in report.targets)
+        assert {t.game for t in report.targets} == {"NESBand", "GBBand", "GENBand", "NGBand"}
+    # El YM2151 (arcade) todavía no: nadie saca sus notas
+    report = detect.analyze(parse_vgm(make_vgm(bytes([0x54, 0x08, 0x00]), {YM2151: 3579545})))
+    assert report.targets and not any(t.ready for t in report.targets)
 
 
 def test_unknown_chip_has_no_target():
