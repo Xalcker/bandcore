@@ -165,6 +165,20 @@ class Vgm:
     blocks: list[Block] = field(default_factory=list)
     dac: list[DacEvent] = field(default_factory=list)
     other: list[Other] = field(default_factory=list)
+    end_sample: int = 0  # instante del fin de los datos ($66); `total_samples` es lo que dice la cabecera
+    loop_write: int | None = None  # índice en `writes` de la primera escritura del bucle (None = no tiene)
+
+    @property
+    def title(self) -> str:
+        return self.tags.get("title", "").strip()
+
+    @property
+    def game(self) -> str:
+        return self.tags.get("game", "").strip()
+
+    @property
+    def author(self) -> str:
+        return self.tags.get("author", "").strip()
 
     @property
     def used(self) -> Counter[str]:
@@ -270,6 +284,7 @@ def _parse(raw: bytes, name: str) -> Vgm:
     while pos < len(data):
         if loop_pos is not None and pos == loop_pos:
             vgm.loop_sample = sample
+            vgm.loop_write = len(vgm.writes)
         cmd = data[pos]
         if cmd == 0x66:
             break
@@ -320,8 +335,38 @@ def _parse(raw: bytes, name: str) -> Vgm:
             length = _other_length(cmd, pos)
             vgm.other.append(Other(sample, cmd, pos))
             pos += length
+    vgm.end_sample = sample
     vgm.total_samples = total or sample
     return vgm
+
+
+def looped_writes(vgm: Vgm, max_samples: int, chip: str | None = None, index: int = 0):
+    """Las escrituras como las toca el archivo: hasta el fin y, si tiene bucle, otra vez desde el punto de repetición
+    (en el instante exacto, en muestras), mientras el instante sea menor que `max_samples`. Con `chip`, solo las de ese
+    chip (y ese `index`: 0 = primer chip)."""
+
+    def keep(w: ChipWrite) -> bool:
+        return chip is None or (w.chip == chip and w.index == index)
+
+    for w in vgm.writes:
+        if w.sample >= max_samples:
+            return
+        if keep(w):
+            yield w
+    if vgm.loop_write is None or vgm.loop_sample is None:
+        return
+    period = vgm.end_sample - vgm.loop_sample
+    loop = [w for w in vgm.writes[vgm.loop_write :] if keep(w)]
+    if period <= 0 or not loop:  # una vuelta sin esperas no avanza: se termina
+        return
+    shift = period
+    while True:
+        for w in loop:
+            sample = w.sample + shift
+            if sample >= max_samples:
+                return
+            yield ChipWrite(sample, w.chip, w.reg, w.value, w.port, w.index, w.cmd)
+        shift += period
 
 
 def frame_of(sample: int) -> int:

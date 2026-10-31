@@ -93,7 +93,7 @@ def analyze(vgm: Vgm) -> Report:
         targets.append(Target("NGBand", NATIVE, True, "YM2610B: los canales FM 1 y 4 no existen en la Neo Geo" if b else ""))
     if "gb_dmg" in present:
         covered.add("gb_dmg")
-        targets.append(Target("GBBand", NATIVE, False, "falta el importador de VGM de Game Boy"))
+        targets.append(Target("GBBand", NATIVE, True))
     if "nes_apu" in present:
         covered.add("nes_apu")
         fds = "; el canal FDS se pierde" if vgm.flags.get("nes_apu", 0) & 2 else ""

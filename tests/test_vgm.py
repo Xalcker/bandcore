@@ -8,7 +8,7 @@ import pytest
 
 from bandcore import detect
 from bandcore.cli import main
-from bandcore.vgm import frame_of, parse_vgm, unrolled_writes
+from bandcore.vgm import frame_of, looped_writes, parse_vgm, unrolled_writes
 
 # Posiciones de los relojes en la cabecera
 SN, YM2612, YM2151, YM2610, GB, NES = 0x0C, 0x2C, 0x30, 0x4C, 0x80, 0x84
@@ -86,6 +86,18 @@ def test_loop_and_unrolled_writes():
     assert frame_of(735) == 1 and frame_of(367) == 0 and frame_of(368) == 1
 
 
+def test_looped_writes_follow_the_file():
+    # Escritura A en 0, marca de bucle, B en 0 (mismo instante: no se repite A), espera 100, C en 100, espera 50
+    body = bytes([0xB3, 0x12, 0xA0, 0xB3, 0x13, 0xB0, 0x61, 100, 0, 0xB3, 0x14, 0xC0, 0x61, 50, 0, 0x50, 0x9F])
+    vgm = parse_vgm(make_vgm(body, {GB: 4194304}, loop_at=3, loop_samples=150, total=150))
+    assert vgm.loop_sample == 0 and vgm.loop_write == 1 and vgm.end_sample == 150
+    got = [(w.sample, w.reg) for w in looped_writes(vgm, 400, "gb_dmg")]
+    assert got == [(0, 0x12), (0, 0x13), (100, 0x14), (150, 0x13), (250, 0x14), (300, 0x13)]
+    assert [w.sample for w in looped_writes(vgm, 1000)][:5] == [0, 0, 100, 150, 150]  # con el PSG del final
+    no_loop = parse_vgm(make_vgm(body, {GB: 4194304}))
+    assert [w.sample for w in looped_writes(no_loop, 10**6, "gb_dmg")] == [0, 0, 100]
+
+
 def test_dac_blocks_and_other_commands():
     block = bytes([0x67, 0x66, 0x00]) + struct.pack("<I", 3) + b"\x80\x90\xA0"
     body = block + bytes([0xE0, 2, 0, 0, 0, 0x81, 0x82, 0x93] + [0] * 10 + [0xC0, 0, 0, 0])
@@ -134,7 +146,7 @@ def test_neo_geo_is_native_for_ngband():
 
 def test_game_boy_and_nes_are_pending():
     system, got = targets(make_vgm(bytes([0xB3, 0x12, 0x80]), {GB: 4194304}))
-    assert system.startswith("Game Boy") and got[0] == ("GBBand", "nativo", False)
+    assert system.startswith("Game Boy") and got[0] == ("GBBand", "nativo", True)
     system, got = targets(make_vgm(bytes([0xB4, 0x15, 0x0F]), {NES: 1789772}))
     assert system.startswith("NES") and got[:2] == [("NESBand", "nativo", False), ("GBBand", "arreglo", False)]
 
