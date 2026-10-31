@@ -14,6 +14,9 @@ Hoy trae:
 - **Páginas del editor de charts** (`bandcore.editor`): `editor.html`, `home.html` y el menú Archivo, iguales en
   los cuatro juegos. Cada juego las sirve con su perfil (nombre, botones, canales del chip, textos de exportar e
   importar) y su reproductor para "Escuchar", que define `window.BandPlayer` (ver `src/bandcore/editor/__init__.py`).
+- **Ediciones de charts** (`bandcore.chartedit`): `edits.json`, aplicar y comparar ediciones y los avisos de lo que
+  no se puede tocar. Con la nota (`bandcore.chart.ChartNote`) y las reglas de la cruz del control (`check_playable`).
+  Leer los charts ya exportados (chart.s del NES, .bin de la Game Boy) sigue en cada juego.
 
 ```bash
 uv sync
