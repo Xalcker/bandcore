@@ -27,7 +27,7 @@ def test_project(tmp_path):
     assert info["frames_per_beat"] == 24 and info["beat"] * info["note_length"] == 24
     assert 'Copyright=""' not in text  # FamiStudio no abre el proyecto con el Copyright vacío
     assert 'Instrument Name="Guitarra 13"' in text and 'Instrument Name="Guitarra 9"' in text
-    assert "Teclado" not in text  # la nota muda no crea instrumento
+    assert "Piano" not in text  # la nota muda no crea instrumento
     # Una sola nota de ruido por cuadro: en el cuadro 0 gana el bombo al platillo
     noise = text.split('Channel Type="Noise"')[1].split('Channel Type="DPCM"')[0]
     assert 'Note Time="0" Value="A#2"' in noise and 'Value="G#3" Duration="1" Instrument="Platillo"' not in noise
@@ -36,3 +36,26 @@ def test_project(tmp_path):
     assert max(durations) <= 99
     for kind in ("Square1", "Square2", "Triangle", "Noise", "DPCM"):
         assert f'Channel Type="{kind}"' in text
+
+
+def test_timbres(tmp_path):
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    famistudio.write_project(DATA, a, timbre="A")
+    famistudio.write_project(DATA, b, timbre="B")
+    ta, tb = a.read_text(encoding="utf-8"), b.read_text(encoding="utf-8")
+    assert 'Instrument Name="Guitarra 13"' in ta and 'Instrument Name="Sintetizador 13"' in tb
+    # A: la guitarra decae un poco y tiene duty 25 %; B: el sintetizador se sostiene con duty 50 %
+    guitarra = ta.split('Instrument Name="Guitarra 13"')[1].split("Instrument Name")[0]
+    sinte = tb.split('Instrument Name="Sintetizador 13"')[1].split("Instrument Name")[0]
+    assert 'Values="13,13,12,12,12,11"' in guitarra and 'Type="DutyCycle" Length="1" Values="1"' in guitarra
+    assert 'Type="Volume" Length="1" Values="13"' in sinte and 'Values="2"' in sinte
+
+
+def test_ruido():
+    # C0 = 1 en FamiStudio y el periodo es 15 - (nota mod 16): los golpes de compose.py
+    assert famistudio.noise_note(12) == "A#2" or famistudio.noise_note(12)[:-1] == "A#"
+    for period in range(16):
+        name = famistudio.noise_note(period)
+        octave = int(name[-1]) if name[-2] != "-" else -int(name[-1])
+        value = 12 * octave + famistudio.NAMES.index(name[:-1]) + 1
+        assert 15 - (value % 16) == period

@@ -25,7 +25,15 @@ Hoy trae:
 - **Arreglos entre consolas** (`bandcore.notes`, `bandcore.famistudio`): un formato común de notas (guitarra,
   teclado, bajo y batería por papeles) que cada juego exporta con `<juego> export-notes`, y un escritor de proyectos
   de FamiStudio que NESBand, GBBand y NGBand importan (GENBand usa `audio/arreglo_fm.py`). Probado en las 12
-  direcciones entre NES, Game Boy, Genesis y Neo Geo.
+  direcciones entre NES, Game Boy, Genesis y Neo Geo. Dos timbres, como en GENBand: **A** (guitarra, piano y bajo) y
+  **B** (sintetizador, pulsada y bajo); en el NES y la Game Boy son duty y envolvente, en la Neo Geo el patch FM.
+- **APU del NES** (`bandcore.nesapu`): el emulado que usan GBBand (NSF y VGM del NES) y NESBand (VGM del NES), con la
+  grabación cuadro por cuadro y sus notas; `famistudio.write_recording_project` lo vuelve un proyecto fiel (duty y
+  envolvente de cada nota).
+
+```bash
+uv run band famistudio notas.json --out arreglo.txt --timbre todos     # arreglo.txt (A) y arreglo_b.txt (B)
+```
 - **Ediciones de charts** (`bandcore.chartedit`): `edits.json`, aplicar y comparar ediciones y los avisos de lo que
   no se puede tocar. Con la nota (`bandcore.chart.ChartNote`) y las reglas de la cruz del control (`check_playable`).
   Leer los charts ya exportados (chart.s del NES, .bin de la Game Boy) sigue en cada juego.

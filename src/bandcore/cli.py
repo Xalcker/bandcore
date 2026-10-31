@@ -1,6 +1,7 @@
 """Línea de comandos de bandcore.
 
     uv run band inspect cancion.vgz [otra.vgm ...] [--json]
+    uv run band famistudio notas.json --out arreglo.txt [--timbre A|B|todos]
 """
 
 from __future__ import annotations
@@ -87,6 +88,22 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_famistudio(args: argparse.Namespace) -> int:
+    """Las notas de `<juego> export-notes` a un proyecto de FamiStudio, con el timbre A, B o los dos."""
+    from . import famistudio, notes
+
+    data = notes.read(args.notes)
+    out = Path(args.out)
+    timbres = list(famistudio.TIMBRES) if args.timbre == "todos" else [args.timbre]
+    for timbre in timbres:
+        path = out if timbre == "A" else out.with_name(f"{out.stem}_{timbre.lower()}{out.suffix}")
+        info = famistudio.write_project(data, path, timbre=timbre)
+        sounds = ", ".join(s[0] for s in famistudio.TIMBRES[timbre].values())
+        print(f"{path}: timbre {timbre} ({sounds}); {info['patterns']} compases de {info['frames_per_beat'] * 4} cuadros, "
+              f"{info['instruments']} instrumentos")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Las etiquetas GD3 traen japonés: en UTF-8 aunque la salida vaya a una tubería de Windows (que usaría cp1252)
     if hasattr(sys.stdout, "reconfigure"):
@@ -97,6 +114,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("files", nargs="+")
     p.add_argument("--json", action="store_true", help="salida en JSON")
     p.set_defaults(func=cmd_inspect)
+    p = sub.add_parser("famistudio", help="arregla las notas de otra consola (de <juego> export-notes) como proyecto de "
+                                          "FamiStudio para NESBand, GBBand o NGBand")
+    p.add_argument("notes", help="JSON de export-notes")
+    p.add_argument("--out", required=True, help="proyecto de salida (.txt); el timbre B sale como <nombre>_b.txt")
+    p.add_argument("--timbre", default="A", choices=["A", "B", "todos"],
+                   help="A: guitarra, piano y bajo (por omisión); B: sintetizador, pulsada y bajo")
+    p.set_defaults(func=cmd_famistudio)
     args = parser.parse_args(argv)
     return args.func(args)
 
