@@ -38,6 +38,14 @@ uv run band famistudio notas.json --out arreglo.txt --timbre todos     # arreglo
   no se puede tocar. Con la nota (`bandcore.chart.ChartNote`) y las reglas de la cruz del control (`check_playable`).
   Leer los charts ya exportados (chart.s del NES, .bin de la Game Boy) sigue en cada juego.
 
+- **Corredor de pruebas** (`bandcore.testrun`): lo que repetían los arneses de cada juego. Compila (`build.sh` o
+  `build.ps1` según el sistema), lanza el emulador sin ventana (`Mame` para GENBand y NGBand, `Mesen` para NESBand),
+  corre los casos en paralelo (`-j N`) con límite de tiempo, resume y devuelve el código de salida. Los cuatro juegos
+  tienen el mismo comando, igual en macOS y Windows: `uv run <juego> test [--no-build] [--rapida] [-j N] [--lista]
+  [patron]`. Cada juego pone sus casos y su revisor; las fallas ya conocidas van en `tests/known_failures.txt` (no
+  cambian el código de salida, una falla nueva sí). GBBand usa pytest con PyBoy y solo toma de aquí las opciones y la
+  compilación.
+
 ```bash
 uv sync
 uv run band inspect cancion.vgz          # chips, duración, bucle, etiquetas y destinos
