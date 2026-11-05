@@ -7,7 +7,11 @@ de 44.1 kHz. Este módulo lee `.vgm` y `.vgz` (el mismo formato comprimido con g
   - las escrituras a cualquier chip (`ChipWrite`), con su instante;
   - los bloques de datos (`Block`, comando $67) sin interpretar;
   - los eventos del DAC del YM2612 (`DacEvent`: $8n toca un byte del banco, $E0 salta a un lugar);
-  - los comandos que no se leen (`Other`: streams de DAC $90-$95, escrituras a RAM $68, memorias de chips $C0-$DF...).
+  - las escrituras a la memoria del SegaPCM ($C0), como `ChipWrite` con la dirección en `reg`;
+  - los comandos de los streams de DAC ($90-$95, `StreamEvent`), con los que se tocan samples de un bloque
+    (el OKIM6258 del X68000, por ejemplo);
+  - los bloques de ROM de los chips de samples armados como la memoria del chip (`rom`);
+  - los comandos que no se leen (`Other`: escrituras a RAM $68, otras memorias de chips $C1-$DF...).
 
 Qué hacer con todo eso le toca a cada juego (GENBand, NGBand...) y a `detect.py`, que dice para qué juego sirve.
 
@@ -144,6 +148,19 @@ class DacEvent:
 
 
 @dataclass(frozen=True)
+class StreamEvent:
+    """Un comando de stream de DAC: `kind` = "setup" ($90: `args` = tipo de chip, puerto, comando), "data" ($91:
+    bloque, tamaño del paso, base del paso), "freq" ($92: frecuencia), "start" ($93: posición en el banco, modo del
+    largo, largo), "stop" ($94) o "block" ($95: número de bloque, banderas). El tipo de chip es su lugar en la
+    cabecera (0 = SN76489, 3 = YM2151, $17 = OKIM6258...; bit 7 = segundo chip)."""
+
+    sample: int
+    kind: str
+    stream: int
+    args: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
 class Other:
     """Un comando que este lector no interpreta (pero sabe cuánto mide)."""
 
@@ -165,8 +182,14 @@ class Vgm:
     blocks: list[Block] = field(default_factory=list)
     dac: list[DacEvent] = field(default_factory=list)
     other: list[Other] = field(default_factory=list)
+    streams: list[StreamEvent] = field(default_factory=list)
     end_sample: int = 0  # instante del fin de los datos ($66); `total_samples` es lo que dice la cabecera
     loop_write: int | None = None  # índice en `writes` de la primera escritura del bucle (None = no tiene)
+    header: bytes = b""  # la cabecera tal cual (hasta donde empiezan los datos), para los campos que no se leen aquí
+
+    def header_word(self, offset: int) -> int:
+        """Un campo de 32 bits de la cabecera (0 si la cabecera no llega ahí)."""
+        return struct.unpack_from("<I", self.header, offset)[0] if offset + 4 <= len(self.header) else 0
 
     @property
     def title(self) -> str:
@@ -234,6 +257,39 @@ def _other_length(cmd: int, pos: int) -> int:
     raise ValueError(f"comando VGM desconocido ${cmd:02X} en el byte {pos:#x}")
 
 
+def _stream(cmd: int, data: bytes, pos: int, sample: int) -> StreamEvent:
+    stream = data[pos + 1]
+    if cmd == 0x90:
+        return StreamEvent(sample, "setup", stream, tuple(data[pos + 2 : pos + 5]))
+    if cmd == 0x91:
+        return StreamEvent(sample, "data", stream, tuple(data[pos + 2 : pos + 5]))
+    if cmd == 0x92:
+        return StreamEvent(sample, "freq", stream, struct.unpack_from("<I", data, pos + 2))
+    if cmd == 0x93:
+        return StreamEvent(sample, "start", stream, struct.unpack_from("<IBI", data, pos + 2))
+    if cmd == 0x94:
+        return StreamEvent(sample, "stop", stream)
+    return StreamEvent(sample, "block", stream, struct.unpack_from("<HB", data, pos + 2))
+
+
+def rom(vgm: Vgm, block_type: int, index: int = 0) -> bytes:
+    """La ROM de un chip de samples ($80 SegaPCM, $8B OKIM6295, $8E K053260...) armada de sus bloques: cada bloque
+    trae el tamaño total, dónde empieza y sus bytes. `index` 1 es la del segundo chip (bit 31 del tamaño)."""
+    image = bytearray()
+    for block in vgm.blocks:
+        if block.type != block_type or len(block.data) < 8:
+            continue
+        size, start = struct.unpack_from("<II", block.data)
+        if (size >> 31) != index:
+            continue
+        payload = block.data[8:]
+        end = start + len(payload)
+        if len(image) < max(size & 0x7FFFFFFF, end):
+            image.extend(bytes(max(size & 0x7FFFFFFF, end) - len(image)))
+        image[start:end] = payload
+    return bytes(image)
+
+
 def parse_vgm(raw: bytes, name: str = "VGM") -> Vgm:
     """Interpreta los bytes de un VGM (con o sin gzip). Lanza ValueError si no es un VGM o está dañado."""
     try:
@@ -277,7 +333,8 @@ def _parse(raw: bytes, name: str) -> Vgm:
                 flags[chip] = value >> 30
     loop_pos = 0x1C + loop_offset if loop_offset else None
 
-    vgm = Vgm(version, clocks, flags, 0, None, loop_samples, _gd3(data, 0x14 + gd3_offset if gd3_offset else 0))
+    vgm = Vgm(version, clocks, flags, 0, None, loop_samples, _gd3(data, 0x14 + gd3_offset if gd3_offset else 0),
+              header=bytes(data[: min(start, len(data))]))
     waits = {0x62: 735, 0x63: 882}
     sample = 0
     pos = start
@@ -322,6 +379,13 @@ def _parse(raw: bytes, name: str) -> Vgm:
         elif cmd == 0xE0:
             vgm.dac.append(DacEvent(sample, "seek", struct.unpack_from("<I", data, pos + 1)[0]))
             pos += 5
+        elif cmd == 0xC0:  # SegaPCM: escritura a su memoria (dirección de 16 bits)
+            addr = struct.unpack_from("<H", data, pos + 1)[0]
+            vgm.writes.append(ChipWrite(sample, "segapcm", addr & 0x7FFF, data[pos + 3], 0, addr >> 15, cmd))
+            pos += 4
+        elif 0x90 <= cmd <= 0x95:
+            vgm.streams.append(_stream(cmd, data, pos, sample))
+            pos += _other_length(cmd, pos)
         elif cmd == 0x67:
             if data[pos + 1] != 0x66:
                 raise ValueError(f"{name}: bloque de datos mal formado en el byte {pos:#x}")

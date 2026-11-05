@@ -8,7 +8,7 @@ import pytest
 
 from bandcore import detect
 from bandcore.cli import main
-from bandcore.vgm import frame_of, looped_writes, parse_vgm, unrolled_writes
+from bandcore.vgm import frame_of, looped_writes, parse_vgm, rom, unrolled_writes
 
 # Posiciones de los relojes en la cabecera
 SN, YM2612, YM2151, YM2610, GB, NES = 0x0C, 0x2C, 0x30, 0x4C, 0x80, 0x84
@@ -100,12 +100,30 @@ def test_looped_writes_follow_the_file():
 
 def test_dac_blocks_and_other_commands():
     block = bytes([0x67, 0x66, 0x00]) + struct.pack("<I", 3) + b"\x80\x90\xA0"
-    body = block + bytes([0xE0, 2, 0, 0, 0, 0x81, 0x82, 0x93] + [0] * 10 + [0xC0, 0, 0, 0])
+    body = block + bytes([0xE0, 2, 0, 0, 0, 0x81, 0x82, 0x68, 0x66] + [0] * 10 + [0xC1, 0, 0, 0])
     vgm = parse_vgm(make_vgm(body))
     assert [(b.type, b.data) for b in vgm.blocks] == [(0, b"\x80\x90\xA0")]
     assert [(d.sample, d.kind, d.offset) for d in vgm.dac] == [(0, "seek", 2), (0, "play", 0), (1, "play", 0)]
-    assert [o.cmd for o in vgm.other] == [0x93, 0xC0]
+    assert [o.cmd for o in vgm.other] == [0x68, 0xC1]
     assert vgm.chips() == ["ym2612"]  # los golpes del DAC cuentan como YM2612
+
+
+def test_segapcm_streams_and_rom():
+    rom_block = lambda start, payload: (bytes([0x67, 0x66, 0x80]) + struct.pack("<I", 8 + len(payload))
+                                        + struct.pack("<II", 16, start) + payload)
+    body = (rom_block(4, b"\x01\x02") + rom_block(0, b"\x09")
+            + bytes([0xC0, 0x86, 0x80, 0x01])                          # SegaPCM, dirección $0086 del segundo chip
+            + bytes([0x90, 0, 0x17, 0, 0]) + bytes([0x91, 0, 4, 1, 0])
+            + bytes([0x92, 0]) + struct.pack("<I", 15625)
+            + bytes([0x93, 0]) + struct.pack("<IBI", 0x100, 1, 0x40)
+            + bytes([0x95, 0]) + struct.pack("<HB", 3, 0) + bytes([0x94, 0]))
+    vgm = parse_vgm(make_vgm(body))
+    assert [(w.chip, w.reg, w.value, w.index) for w in vgm.writes] == [("segapcm", 0x86, 1, 1)]
+    assert [(s.kind, s.stream, s.args) for s in vgm.streams] == [
+        ("setup", 0, (0x17, 0, 0)), ("data", 0, (4, 1, 0)), ("freq", 0, (15625,)),
+        ("start", 0, (0x100, 1, 0x40)), ("block", 0, (3, 0)), ("stop", 0, ())]
+    assert vgm.other == []
+    assert rom(vgm, 0x80) == b"\x09\x00\x00\x00\x01\x02" + bytes(10)
 
 
 def test_wait_override():
@@ -157,9 +175,11 @@ def test_arrangements_are_ready_for_the_four_chips():
         report = detect.analyze(parse_vgm(make_vgm(body, clocks)))
         assert len(report.targets) == 4 and all(t.ready for t in report.targets)
         assert {t.game for t in report.targets} == {"NESBand", "GBBand", "GENBand", "NGBand"}
-    # El YM2151 (arcade) todavía no: nadie saca sus notas
-    report = detect.analyze(parse_vgm(make_vgm(bytes([0x54, 0x08, 0x00]), {YM2151: 3579545})))
-    assert report.targets and not any(t.ready for t in report.targets)
+    # El YM2151 (arcade) no es nativo de nadie: sus notas salen con band export-notes, y su chip de samples es la batería
+    report = detect.analyze(parse_vgm(make_vgm(bytes([0x54, 0x08, 0x00, 0xB8, 0x00, 0x81]), {YM2151: 3579545})))
+    assert report.system.startswith("arcade") and report.lost == []
+    assert len(report.targets) == 4 and all(t.ready and t.mode == "arreglo" for t in report.targets)
+    assert all("band export-notes" in t.note for t in report.targets)
 
 
 def test_unknown_chip_has_no_target():

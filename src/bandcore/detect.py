@@ -46,6 +46,10 @@ CHIP_NAMES = {
     "huc6280": "HuC6280",
     "k051649": "Konami SCC",
     "pokey": "POKEY",
+    "okim6295": "OKIM6295 (ADPCM)",
+    "okim6258": "OKIM6258 (ADPCM)",
+    "segapcm": "SegaPCM",
+    "k053260": "K053260 (PCM)",
 }
 
 
@@ -82,7 +86,10 @@ EXPORTERS = (
     ({"nes_apu", "gb_dmg"}, "gbband export-notes"),
     ({"ym2612", "sn76489"}, "genband export-notes"),
     ({"ym2610"}, "ngband export-notes"),
+    ({"ym2151"}, "band export-notes"),
 )
+# Chips de samples que acompañan al YM2151: band export-notes saca de ellos la batería (bandcore.pcm)
+ARCADE_DRUMS = {"okim6295", "segapcm", "k053260", "okim6258"}
 
 
 def analyze(vgm: Vgm) -> Report:
@@ -110,7 +117,7 @@ def analyze(vgm: Vgm) -> Report:
         targets.append(Target("GBBand", ARRANGED, True, "gbband import-song lo arregla directo"))
     if "ym2151" in present:
         covered.add("ym2151")
-        targets.append(Target("GENBand", ARRANGED, False, "FM de 4 operadores como el YM2612: traducir instrumentos"))
+        covered |= present & ARCADE_DRUMS  # su batería
 
     # Arreglos (notas a otro chip): listos si el chip de origen tiene export-notes (bandcore.notes)
     exporter = next((tool for chips_, tool in EXPORTERS if present & chips_), None)

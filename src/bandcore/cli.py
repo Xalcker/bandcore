@@ -2,6 +2,8 @@
 
     uv run band inspect cancion.vgz [otra.vgm ...] [--json]
     uv run band famistudio notas.json --out arreglo.txt [--timbre A|B|todos]
+    uv run band channels cancion.vgz                           (YM2151: los canales y la batería sugerida)
+    uv run band export-notes cancion.vgz --out notas.json [--guitarra fm1] [--drums drums.json] ...
 """
 
 from __future__ import annotations
@@ -104,6 +106,57 @@ def cmd_famistudio(args: argparse.Namespace) -> int:
     return 0
 
 
+def _arcade_song(args: argparse.Namespace):
+    from . import arcade
+    from .drums import DRUMS_VERSION
+
+    assignment = None
+    drums_path = Path(args.drums) if getattr(args, "drums", None) else None
+    if drums_path and drums_path.exists():
+        data = json.loads(drums_path.read_text(encoding="utf-8"))
+        if data.get("version") != DRUMS_VERSION:
+            raise ValueError(f"{drums_path}: versión de drums.json no soportada ({data.get('version')})")
+        assignment = data.get("groups", {})
+    channels = {name: getattr(args, name, None) for name in (*arcade.INSTRUMENTS, "bateria")}
+    return arcade.load(args.source, args.duration, getattr(args, "title", None), getattr(args, "game", None),
+                       channels, assignment)
+
+
+def cmd_channels(args: argparse.Namespace) -> int:
+    """Los canales de una canción de YM2151, qué instrumento sería cada uno y los grupos de la batería."""
+    from . import arcade
+
+    try:
+        song = _arcade_song(args)
+    except (OSError, ValueError) as exc:
+        print(f"band: {exc}", file=sys.stderr)
+        return 1
+    print("\n".join(arcade.describe(song)))
+    return 0
+
+
+def cmd_export_notes(args: argparse.Namespace) -> int:
+    """Las notas de una canción de YM2151 en el formato de bandcore.notes. Con --drums, los papeles de la batería
+    salen de ese drums.json; si todavía no existe, se escribe ahí la sugerencia para corregirla."""
+    from . import arcade, notes
+    from .drums import dump_drums
+
+    try:
+        song = _arcade_song(args)
+    except (OSError, ValueError) as exc:
+        print(f"band: {exc}", file=sys.stderr)
+        return 1
+    data = arcade.to_notes(song)
+    notes.write(data, Path(args.out))
+    if args.drums and not Path(args.drums).exists():
+        Path(args.drums).write_text(dump_drums(song.assignment), encoding="utf-8", newline="\n")
+        print(f"{args.drums}: la batería sugerida (corrígela y vuelve a exportar)")
+    used = ", ".join(f"{name} {'+'.join(song.assign.get(name, [])) or '-'}" for name in arcade.INSTRUMENTS)
+    print(f"{args.out}: {song.title} ({song.game}), {song.frames / 60:.1f} s; {used}; "
+          f"batería {'+'.join(song.drums) or '-'} ({len(data['drums'])} golpes)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Las etiquetas GD3 traen japonés: en UTF-8 aunque la salida vaya a una tubería de Windows (que usaría cp1252)
     if hasattr(sys.stdout, "reconfigure"):
@@ -121,6 +174,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--timbre", default="A", choices=["A", "B", "todos"],
                    help="A: guitarra, piano y bajo (por omisión); B: sintetizador, pulsada y bajo")
     p.set_defaults(func=cmd_famistudio)
+    for name, helptext in (("channels", "muestra los canales de un VGM de YM2151 (arcade) y la batería sugerida"),
+                           ("export-notes", "saca las notas de un VGM de YM2151 (arcade) a JSON (bandcore.notes) para "
+                                            "arreglarlas en otra consola")):
+        p = sub.add_parser(name, help=helptext)
+        p.add_argument("source")
+        if name == "export-notes":
+            p.add_argument("--out", required=True)
+            p.add_argument("--title")
+            p.add_argument("--game")
+        p.add_argument("--duration", type=float, help="segundos que se toman (por omisión, el archivo; con bucle, al "
+                                                      "menos 120)")
+        for inst in ("guitarra", "teclado", "bajo"):
+            p.add_argument(f"--{inst}", help=f"canal(es) del {inst}: fm1..fm8")
+        p.add_argument("--bateria", help="canal(es) de la batería: fm1..fm8, ruido, oki, segapcm, k053260, adpcm")
+        p.add_argument("--drums", help="drums.json con el papel de cada grupo de la batería (si no existe, se escribe "
+                                       "la sugerencia)" if name == "export-notes" else "drums.json con los papeles")
+        p.set_defaults(func=cmd_export_notes if name == "export-notes" else cmd_channels)
     args = parser.parse_args(argv)
     return args.func(args)
 
