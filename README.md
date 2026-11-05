@@ -43,6 +43,21 @@ uv run band export-notes cancion.vgz --out notas.json --drums drums.json --guita
 uv run band famistudio notas.json --out arreglo.txt               # y luego el import-song de cada juego
 ```
 
+- **Conversión directa** (`bandcore.convert`, `band convert`): lleva una canción (VGM/VGZ, NSF, GBS o proyecto de
+  FamiStudio) a uno o varios juegos en un solo comando. Si el chip es el del destino la importa tal cual; si no, saca
+  las notas con el `export-notes` que corresponde, la arregla (`band famistudio`, y para la Neo Geo además
+  `ngband_tools.famistudio`; para la Genesis `audio/arreglo_fm.py`) y la importa. Cada paso corre en el repo del
+  juego que lo sabe hacer (los clones de al lado, o `--juegos`). Los archivos intermedios quedan en
+  `build/convert/<nombre>/`. Con `--wav`, además renderiza la canción con el reproductor del editor de cada juego
+  (`bandcore.player_wav`, necesita Node.js).
+
+```bash
+uv run band convert cancion.vgz --to todos --name mi_cancion --plan        # solo muestra los pasos
+uv run band convert cancion.vgz --to nes,gen --name mi_cancion --timbre B --wav
+uv run band convert cancion.nsf --to ng --name mi_cancion --track 3 --duration 90
+uv run band convert cancion.vgz --to gb --name mi_cancion --sin-importar   # solo los archivos, sin tocar el juego
+```
+
 - **APU del NES** (`bandcore.nesapu`): el emulado que usan GBBand (NSF y VGM del NES) y NESBand (VGM del NES), con la
   grabación cuadro por cuadro y sus notas; `famistudio.write_recording_project` lo vuelve un proyecto fiel (duty y
   envolvente de cada nota).
@@ -79,7 +94,7 @@ uv run pytest
 | YM2151 (+ OKIM6295, SegaPCM, K053260, OKIM6258) | Arcade (CPS1, System 16, OutRun, Konami), X68000 | — | `band export-notes` |
 
 Con las notas, cualquier consola sirve de destino: NESBand, GBBand y NGBand con `band famistudio`, y GENBand con
-`audio/arreglo_fm.py`, los dos con timbre A o B. Las 12 direcciones entre las cuatro consolas están probadas
+`audio/arreglo_fm.py`, los dos con timbre A o B. `band convert` hace todo el camino en un comando. Las 12 direcciones entre las cuatro consolas están probadas
 (importan con sus charts y suenan en el reproductor del editor).
 
 ## Uso desde un juego
