@@ -1033,8 +1033,10 @@ if (DATA.editable) (function () {
     table.className = "drumtable";
     // La columna Instrumento solo si la fuente nombra los instrumentos (FamiStudio, VGM con instrumentos)
     const withInstrument = PROFILE.drumInstrument !== false;
-    table.innerHTML = "<thead><tr><th>Canal</th><th>Tono / sample</th>" + (withInstrument ? "<th>Instrumento</th>" : "")
-      + "<th>Golpes</th><th>Papel</th><th>Platillo</th></tr></thead>";
+    // ▶ toca solo los golpes de ese grupo, si el juego manda sus cuadros (g.hits) y tiene reproductor
+    const canHear = !!(DATA.player && window.BandPlayer) && drumData.groups.some((g) => g.hits && g.hits.length);
+    table.innerHTML = "<thead><tr>" + (canHear ? "<th></th>" : "") + "<th>Canal</th><th>Tono / sample</th>"
+      + (withInstrument ? "<th>Instrumento</th>" : "") + "<th>Golpes</th><th>Papel</th><th>Platillo</th></tr></thead>";
     const tbody = document.createElement("tbody");
     for (const g of drumData.groups) {
       const item = state.drums.assignment[g.key] || { lane: null, cymbal: false };
@@ -1050,6 +1052,17 @@ if (DATA.editable) (function () {
       cymbal.title = "Los golpes de este grupo son platillos (se distinguen en experto)";
       roleSelect.onchange = () => setGroup(g.key, { lane: roleSelect.value || null, cymbal: ["kick", "snare", ""].includes(roleSelect.value) ? false : cymbal.checked });
       cymbal.onchange = () => setGroup(g.key, { lane: roleSelect.value || null, cymbal: cymbal.checked });
+      if (canHear) {
+        const td = document.createElement("td");
+        if (g.hits && g.hits.length) {
+          const hear = document.createElement("button");
+          hear.textContent = "▶";
+          hear.title = `Escuchar solo este grupo (sus primeros ${g.hits.length} golpes)`;
+          hear.onclick = () => window.playDrumGroup && window.playDrumGroup(g);
+          td.append(hear);
+        }
+        tr.append(td);
+      }
       const channel = (CHANNELS.find((c) => c.id === g.channel) || { label: g.channel }).label;
       const cells = withInstrument ? [channel, g.tone, g.instrument || "—"] : [channel, g.tone];
       for (const text of [...cells, `${g.count} (${g.avgDuration} cuadros)`]) {
@@ -1257,6 +1270,44 @@ if (DATA.editable && DATA.player && window.BandPlayer) (function () {
     }
     return P.mixes.get(key);
   }
+
+  // ▶ de la tabla de la batería: toca solo un grupo de golpes. Con el audio de su canal, un trozo por cada golpe
+  // (g.hits, los primeros que manda el juego): desde el golpe hasta la siguiente nota de ese audio (el canal toca una
+  // nota a la vez, así que no se cuela otro grupo) o GROUP_CUT cuadros, con un silencio corto entre golpes.
+  const GROUP_CUT = 30, GROUP_GAP = 0.12;
+  window.playDrumGroup = async (g) => {
+    pause();
+    try {
+      if (!P.ctx) P.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (P.ctx.state === "suspended") await P.ctx.resume();
+      await prepare();
+    } catch (e) { status(`No pude preparar el audio: ${e.message}`, true); return; }
+    const stemIndex = STEMS.findIndex((ids) => ids.includes(g.channel));
+    const stem = P.stems[stemIndex];
+    if (!stem || !g.hits || !g.hits.length) { status("Ese grupo no tiene audio que tocar.", true); return; }
+    const onsets = STEMS[stemIndex].flatMap((id) => (DATA.channels[id] || []).map((n) => n[0])).sort((a, b) => a - b);
+    const at = (frame) => Math.max(0, Math.round(((frame - LEAD_IN) / FPS) * P.rate));
+    const gap = Math.round(GROUP_GAP * P.rate);
+    const pieces = g.hits.map((hit) => {
+      const next = onsets.find((f) => f > hit) ?? Infinity;
+      return [at(hit), Math.min(at(Math.min(next, hit + GROUP_CUT)), stem.length)];
+    }).filter(([a, b]) => b > a);
+    const out = new Float32Array(pieces.reduce((n, [a, b]) => n + (b - a) + gap, 0));
+    let pos = 0;
+    for (const [a, b] of pieces) {
+      for (let i = a; i < b; i++) out[pos++] = Math.max(-1, Math.min(1, stem[i] * STEM_SCALE));
+      pos += gap;
+    }
+    if (!out.length) { status("Ese grupo no tiene audio que tocar.", true); return; }
+    const buffer = P.ctx.createBuffer(1, out.length, P.rate);
+    buffer.copyToChannel(out, 0);
+    const source = P.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(P.ctx.destination);
+    source.start();
+    P.source = source;   // Escuchar o el siguiente ▶ lo detienen (stopSource)
+    status(`Tocando ${pieces.length} golpe${pieces.length === 1 ? "" : "s"} de ${g.tone}${g.instrument ? ` (${g.instrument})` : ""}`);
+  };
 
   window.onChannelsChanged = () => {
     if (!P.full) return;   // aún no hay audio: se aplica al prepararlo
