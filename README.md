@@ -50,6 +50,12 @@ uv run band famistudio notas.json --out arreglo.txt               # y luego el i
   juego que lo sabe hacer (los clones de al lado, o `--juegos`). Los archivos intermedios quedan en
   `build/convert/<nombre>/`. Con `--wav`, además renderiza la canción con el reproductor del editor de cada juego
   (`bandcore.player_wav`, necesita Node.js).
+  **El chart es el mismo en cualquier consola:** siempre se sacan las notas de la fuente (también cuando el destino la
+  importa tal cual) y de ellas sale un solo `charts.json` (`sharedcharts.from_notes`), que se copia a la canción antes
+  de importarla. Cada juego lo usa tal cual, con su tempo y su duración, así que la misma canción da las mismas notas
+  y termina en el mismo cuadro en la NES, la Game Boy, la Genesis y la Neo Geo.
+- **Chart compartido** (`bandcore.sharedcharts`, `band sync-charts`): el `charts.json` de una canción. Las incluidas
+  usan el de NESBand (`nesband export-charts`), que `band sync-charts` copia a GBBand, GENBand y NGBand.
 
 ```bash
 uv run band convert cancion.vgz --to todos --name mi_cancion --plan        # solo muestra los pasos

@@ -263,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--name", required=True, help="nombre de la canción en el juego (minúsculas, números y _)")
     p.add_argument("--title")
     p.add_argument("--game")
-    p.add_argument("--duration", type=float, help="segundos que se toman (por omisión, los de cada juego: 120 con bucle)")
+    p.add_argument("--duration", type=float, help="segundos que se toman (por omisión, una vuelta de la fuente; el chart y la duración son los mismos en todos los destinos)")
     p.add_argument("--track", type=int, help="NSF y GBS: pista como la numera el .m3u (desde 1)")
     for inst in ("guitarra", "teclado", "bajo"):
         p.add_argument(f"--{inst}", help=f"canal(es) del {inst} en el origen (los nombres de su export-notes)")

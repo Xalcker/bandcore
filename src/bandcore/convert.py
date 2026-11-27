@@ -12,6 +12,11 @@ Encadena lo que hoy son varios comandos en repos distintos. Cada paso corre en e
 
 Fuentes: VGM/VGZ (el chip decide: `bandcore.detect`), NSF/NSFE, GBS y proyectos de FamiStudio (.txt, .fms, .ftm).
 Los archivos intermedios quedan en la carpeta de trabajo para revisarlos o repetir solo el último paso.
+
+El chart es el mismo en cualquier consola: siempre se sacan las notas de la fuente (también cuando el destino la importa
+tal cual) y de ellas sale un solo charts.json (`bandcore.sharedcharts.from_notes`), que se copia a la carpeta de la
+canción antes de importarla; el juego de destino lo usa en vez de generar el suyo. Así el mismo VGM llevado a la NES,
+la Game Boy, la Genesis o la Neo Geo (hoy o después) da las mismas notas que tocar.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import detect
+from . import detect, sharedcharts
 from .vgm import read_vgm
 
 TARGETS = {"nes": "NESBand", "gb": "GBBand", "gen": "GENBand", "ng": "NGBand"}
@@ -171,18 +176,17 @@ def make_plan(source: Path, target: str, name: str, games_dir: Path, work: Path,
     if import_song and song_dir.exists() and not replace:
         raise ValueError(f"{game} ya tiene una canción {name} ({song_dir}): usa otro --name o --reemplazar")
 
-    if game in _native(source, chips):
-        if not import_song:
-            raise ValueError(f"{source.name} se importa tal cual en {game}: sin importar no hay nada que convertir")
-        steps.append(Step(f"{game} la importa tal cual", ["uv", "run", tool, "import-song", str(source), "--name", name,
-                                                          *_options(tool, IMPORT_OPTIONS, opts)], repo))
-        return Plan(source, game, detect.NATIVE, f"{tool} import-song", steps, song_dir, work)
-
+    native = game in _native(source, chips)
+    if native and not import_song:
+        raise ValueError(f"{source.name} se importa tal cual en {game}: sin importar no hay nada que convertir")
     exporter = _exporter(source, chips)
-    if exporter is None:
+    if exporter is None and not native:
         raise ValueError(f"{source.name}: nadie saca las notas de {', '.join(sorted(chips)) or 'este archivo'}")
     notes_json = work / "notas.json"
-    if exporter == "band":
+    charts_json = work / sharedcharts.CHARTS_FILE
+    if exporter is None:
+        pass   # (nativo sin quien saque las notas: el juego genera su chart como siempre)
+    elif exporter == "band":
         def export_band() -> None:
             from .cli import main
             args = ["export-notes", str(source), "--out", str(notes_json), *_options("band", EXPORT_OPTIONS, opts)]
@@ -195,6 +199,26 @@ def make_plan(source: Path, target: str, name: str, games_dir: Path, work: Path,
         steps.append(Step(f"{TOOLS_TO_GAME[exporter]} saca las notas",
                           ["uv", "run", exporter, "export-notes", str(source), "--out", str(notes_json),
                            *_options(exporter, EXPORT_OPTIONS, opts)], exporter_repo, outputs=[notes_json]))
+
+    def make_charts() -> None:
+        from . import notes as bnotes
+        charts_json.write_text(sharedcharts.from_notes(bnotes.read(notes_json)), encoding="utf-8", newline="\n")
+
+    def place_charts() -> None:   # antes de importar: el juego usa este chart en vez de generar el suyo
+        song_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(charts_json, song_dir / sharedcharts.CHARTS_FILE)
+
+    if exporter is not None:
+        steps.append(Step("bandcore saca el chart de las notas (el mismo en cualquier consola)", fn=make_charts,
+                          outputs=[charts_json]))
+        if import_song:
+            steps.append(Step(f"copia el chart a {song_dir}", fn=place_charts,
+                              outputs=[song_dir / sharedcharts.CHARTS_FILE]))
+
+    if native:
+        steps.append(Step(f"{game} la importa tal cual", ["uv", "run", tool, "import-song", str(source), "--name", name,
+                                                          *_options(tool, IMPORT_OPTIONS, opts)], repo))
+        return Plan(source, game, detect.NATIVE, f"{tool} import-song", steps, song_dir, work)
 
     if game == "GENBand":
         cmd = ["uv", "run", "python", "audio/arreglo_fm.py", str(notes_json), "--nombre", name, "--timbre", timbre]

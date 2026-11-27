@@ -39,8 +39,11 @@ def commands(p):
 def test_native_import(games, tmp_path):
     genesis = source(tmp_path, "g.vgm", bytes([0x52, 0x28, 0xF0]), {YM2612: 7670453})
     p = plan(genesis, "gen", games, tmp_path, duration=40.5, guitarra="fm1", drums="x.json")
-    assert p.mode == "nativo" and len(p.steps) == 1
-    cmd = p.steps[0].cmd
+    # también en nativo: las notas, el chart compartido y su copia a la canción antes de importar
+    assert p.mode == "nativo" and commands(p) == [("GENBand", ["uv", "run", "genband", "export-notes"]),
+                                                  (None, "bandcore"), (None, "copia"),
+                                                  ("GENBand", ["uv", "run", "genband", "import-song"])]
+    cmd = p.steps[-1].cmd
     assert cmd[:4] == ["uv", "run", "genband", "import-song"] and cmd[5:7] == ["--name", "prueba"]
     assert cmd[7:] == ["--duration", "40.5", "--guitarra", "fm1"]  # sin --drums: import-song no lo entiende
     assert p.song_dir == games / "GENBand" / "src" / "songs" / "prueba"
@@ -49,21 +52,21 @@ def test_native_import(games, tmp_path):
 def test_arrangements_run_in_each_repo(games, tmp_path):
     genesis = source(tmp_path, "g.vgm", bytes([0x52, 0x28, 0xF0]), {YM2612: 7670453})
     p = plan(genesis, "nes", games, tmp_path, duration=40.5)
-    assert commands(p) == [("GENBand", ["uv", "run", "genband", "export-notes"]), (None, "bandcore"),
-                           ("NESBand", ["uv", "run", "nesband", "import-song"])]
+    assert commands(p) == [("GENBand", ["uv", "run", "genband", "export-notes"]), (None, "bandcore"), (None, "copia"),
+                           (None, "bandcore"), ("NESBand", ["uv", "run", "nesband", "import-song"])]
     export = p.steps[0].cmd
     assert export[export.index("--duration") + 1] == "40"  # genband export-notes pide un entero
     gameboy = source(tmp_path, "gb.vgm", bytes([0xB3, 0x12, 0x80]), {GB: 4194304})
     p = plan(gameboy, "gen", games, tmp_path, timbre="B")
-    assert commands(p) == [("GBBand", ["uv", "run", "gbband", "export-notes"]),
+    assert commands(p) == [("GBBand", ["uv", "run", "gbband", "export-notes"]), (None, "bandcore"), (None, "copia"),
                            ("GENBand", ["uv", "run", "python", "audio/arreglo_fm.py"])]
-    assert p.steps[1].cmd[-3:] == ["--timbre", "B", "--importar"]
+    assert p.steps[3].cmd[-3:] == ["--timbre", "B", "--importar"]
     neogeo = source(tmp_path, "ng.vgm", bytes([0x58, 0x28, 0xF1]), {YM2610: 8_000_000})
     p = plan(neogeo, "ng", games, tmp_path)
     assert p.mode == "nativo"
     p = plan(gameboy, "ng", games, tmp_path)
-    assert [s.cwd.name if s.cwd else None for s in p.steps] == ["GBBand", None, "NGBand", "NGBand"]
-    assert p.steps[3].cmd[-2:] == ["--duration", convert.NOTES_SECONDS]
+    assert [s.cwd.name if s.cwd else None for s in p.steps] == ["GBBand", None, None, None, "NGBand", "NGBand"]
+    assert p.steps[5].cmd[-2:] == ["--duration", convert.NOTES_SECONDS]
 
 
 def test_other_sources(games, tmp_path):
@@ -115,6 +118,12 @@ def test_execute_ym2151_to_neo_geo(games, tmp_path):
     assert [cwd for cwd, _ in ran] == ["NGBand", "NGBand"]
     duration = ran[1][1][ran[1][1].index("--duration") + 1]
     assert duration == f"{data['frames'] / 60 + 0.5:.1f}"  # la duración de las notas, no los 120 s del bucle
+    # el chart compartido quedó en la canción antes de importarla, y otro destino recibe exactamente el mismo
+    placed = (games / "NGBand" / "src" / "songs" / "prueba" / "charts.json").read_text()
+    assert json.loads(placed)["charts"] and json.loads(placed)["source"] == "band convert"
+    other = plan(arcade, "gb", games, tmp_path)
+    convert.execute(other, lambda cmd, cwd: 0, echo=lambda text: None)
+    assert (games / "GBBand" / "src" / "songs" / "prueba" / "charts.json").read_text() == placed
 
 
 def test_execute_reports_failures(games, tmp_path):

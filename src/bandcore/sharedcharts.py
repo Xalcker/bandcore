@@ -119,6 +119,44 @@ def sync(source_root: Path, targets: list[Path], names: list[str] | None = None)
     return done
 
 
+# Del formato de notas (bandcore.notes) al chart: el papel de cada canal y de dónde sale la armonía de sus acordes
+NOTES_ROLES = {"guitarra": ("Square1", "lead", "Square2"), "teclado": ("Square2", "keys", "Square1"),
+               "bajo": ("Triangle", "bass", None)}
+
+
+def from_notes(data: dict, source: str = "band convert") -> str:
+    """El texto de charts.json de una canción en el formato de notas (bandcore.notes): el chart que `band convert` lleva
+    a todas las consolas de destino, para que la canción se toque igual en cualquiera.
+
+    Lo genera el mismo generador que usan los juegos (bandcore.chart y bandcore.drums), con los cuadros desde que
+    arranca la música; el tempo se estima de los ataques de todas las notas, como hace un juego con un VGM."""
+    from .chart import DIFFICULTIES as DIFFS, Note, build_chart, estimate_beat, merge_attacks
+    from .drums import Hit, build_drum_chart
+
+    def notes_of(channel: str | None) -> list[Note]:
+        if channel is None:
+            return []
+        return [Note(f, pitch, max(1, dur)) for f, dur, pitch, *_ in data["channels"].get(channel, [])]
+
+    channels = {name: notes_of(name) for name in ("Square1", "Square2", "Triangle")}
+    hits = [Hit(f, role, bool(cym)) for f, role, cym in data.get("drums", []) if role]
+    onsets = [n.frame for ns in channels.values() for n in merge_attacks(ns)] + [h.frame for h in hits]
+    if not onsets:
+        raise ValueError("las notas no traen ninguna nota: no hay chart que hacer")
+    grid = estimate_beat(onsets)
+    charts: dict[str, list[ChartNote]] = {}
+    for instrument, (channel, role, partner) in NOTES_ROLES.items():
+        if not channels[channel]:
+            continue
+        for diff in DIFFS:
+            charts[f"{instrument}/{diff.name}"] = build_chart(channels[channel], diff, grid, 0, role,
+                                                              notes_of(partner))
+    if hits:
+        for diff in DIFFS:
+            charts[f"bateria/{diff.name}"] = build_drum_chart(hits, diff.name, grid, 0)
+    return dumps(charts, 0, source, data["frames"], grid.frames_per_beat, grid.first_beat)
+
+
 def load(song_dir: Path, lead_in: int) -> SharedCharts | None:
     """El charts.json de la canción, o None si no tiene (entonces el juego genera sus charts como siempre)."""
     path = song_dir / CHARTS_FILE
