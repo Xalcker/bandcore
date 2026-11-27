@@ -209,6 +209,19 @@ def cmd_convert(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_sync_charts(args: argparse.Namespace) -> int:
+    from . import sharedcharts
+
+    source = Path(args.desde).resolve()
+    targets = [source.parent / g for g in (args.a.split(",") if args.a else sharedcharts.GAMES) if g != source.name]
+    targets = [t for t in targets if t.is_dir()]
+    done = sharedcharts.sync(source, targets, args.songs or None)
+    print("\n".join(done) if done else "nada que copiar: todo al día")
+    if done:
+        print("ahora reimporta esas canciones en cada juego (<juego> reimport <canción>)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Las etiquetas GD3 traen japonés: en UTF-8 aunque la salida vaya a una tubería de Windows (que usaría cp1252)
     if hasattr(sys.stdout, "reconfigure"):
@@ -268,6 +281,12 @@ def main(argv: list[str] | None = None) -> int:
                                                         "(ruta opcional; necesita Node.js)")
     p.add_argument("--plan", action="store_true", help="solo muestra los pasos, sin correrlos")
     p.set_defaults(func=cmd_convert)
+    p = sub.add_parser("sync-charts", help="copia el chart compartido (charts.json) de NESBand a la misma canción de "
+                                           "GBBand, GENBand y NGBand")
+    p.add_argument("songs", nargs="*", help="canciones (por omisión, todas)")
+    p.add_argument("--desde", default="../NESBand", help="juego de origen (por omisión ../NESBand)")
+    p.add_argument("--a", help="juegos destino separados por coma (por omisión, los otros tres)")
+    p.set_defaults(func=cmd_sync_charts)
     args = parser.parse_args(argv)
     return args.func(args)
 
